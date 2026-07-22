@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GITR2000 - Browser Revival</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <span class="logo">GET IN THE RING <em>2000</em></span>
+    <span id="whoami"></span>
+  </header>
+
+  <main>
+    <section id="view-login">
+      <h2>Enter the arena</h2>
+      <p class="hint">Pick a name to join. No account needed - it's yours for this session only.</p>
+      <input id="username-input" placeholder="choose a name (3-16 chars)" maxlength="16" autocomplete="off">
+      <button id="login-btn">Enter</button>
+      <p id="login-error" class="error"></p>
+    </section>
+
+    <section id="view-lobby" hidden>
+      <div id="news-box" class="news"></div>
+      <h3>Arenas</h3>
+      <ul id="arena-list" class="list"></ul>
+    </section>
+
+    <section id="view-arena" hidden>
+      <div class="arena-layout">
+        <div class="chat-col">
+          <h3 id="arena-name"></h3>
+          <div id="chat-log" class="chat-log"></div>
+          <form id="chat-form" autocomplete="off">
+            <input id="chat-input" autocomplete="off" placeholder="say something...">
+            <button type="submit">Send</button>
+          </form>
+        </div>
+        <div class="side-col">
+          <button id="back-to-lobby" class="secondary">&larr; Arena list</button>
+
+          <h4>Match type</h4>
+          <select id="match-type-select">
+            <option value="singles">Singles</option>
+            <option value="no-dq">No Disqualification</option>
+            <option value="submission">Submission Match</option>
+            <option value="falls-count-anywhere">Falls Count Anywhere</option>
+          </select>
+
+          <h4>In this arena</h4>
+          <ul id="user-list" class="list"></ul>
+
+          <h4>Active matches</h4>
+          <ul id="fights-list" class="list"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-fight" hidden>
+      <h3 id="fight-title"></h3>
+      <div class="fighters">
+        <div class="fighter" id="fighter-0">
+          <div class="fname"></div>
+          <div class="bar-label">Energy</div>
+          <div class="bar energy"><div class="fill"></div></div>
+          <div class="bar-label">Points</div>
+          <div class="bar points"><div class="fill"></div></div>
+        </div>
+        <div class="vs">VS</div>
+        <div class="fighter" id="fighter-1">
+          <div class="fname"></div>
+          <div class="bar-label">Energy</div>
+          <div class="bar energy"><div class="fill"></div></div>
+          <div class="bar-label">Points</div>
+          <div class="bar points"><div class="fill"></div></div>
+        </div>
+      </div>
+      <div id="commentary-log" class="commentary-log"></div>
+      <div id="moves-grid" class="moves-grid"></div>
+      <button id="leave-fight-btn" class="secondary">Leave match</button>
+    </section>
+  </main>
+
+  <div id="challenge-modal" class="modal" hidden>
+    <div class="modal-box">
+      <p id="challenge-text"></p>
+      <button id="challenge-accept">Accept</button>
+      <button id="challenge-decline" class="secondary">Decline</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
