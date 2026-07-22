@@ -464,5 +464,5 @@ async def ws_endpoint(websocket: WebSocket):
             await cleanup(username)
 
 
-frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+frontend_dir = Path(__file__).resolve().parent / "frontend"
 app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
