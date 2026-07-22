@@ -1,11 +1,14 @@
 """GITR2000 browser revival - backend.
 
 A from-scratch reimplementation inspired by the original GITR2000 client's
-shape (arenas/chat rooms, challenges, a live fight with energy/points and
-commentary, spectating) - not a recovered protocol. See game.py for why.
+shape (arenas/chat rooms grouped by country, challenges, a live fight with
+energy/points and commentary, mid-fight tag-team/handicap partner invites,
+spectating, private messages, ignore lists, standard phrases) - not a
+recovered protocol. See game.py for why.
 
-In-memory only: state resets on restart. No accounts/passwords - a
-username is claimed for the duration of the connection.
+Accounts persist (SQLite, accounts.py) so a username+password combo is
+yours across restarts. Everything else (arenas, chat, fights, DMs) is
+in-memory and resets when the process restarts.
 """
 
 import re
@@ -16,37 +19,60 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
-from game import Fight, MOVES
+import accounts
+from game import Fight, MOVES, MAX_TEAM_SIZE
 
 app = FastAPI()
 
-ARENA_NAMES = ["Main Event Arena", "Backyard Brawl", "Tag Team Alley", "Rookie Ring", "Hardcore Zone"]
+AREAS = {
+    "United States": ["Main Event Arena", "Backyard Brawl", "Hardcore Zone"],
+    "United Kingdom": ["Rookie Ring", "Wembley Arena"],
+    "International": ["Tag Team Alley", "World Championship Arena"],
+}
+ARENA_COUNTRY = {name: country for country, names in AREAS.items() for name in names}
+
 NEWS = [
     "Welcome to the GITR2000 browser revival - an unofficial fan recreation.",
     "This is a fresh reimplementation: the original meta server is long gone, so match rules and commentary here are new, not recovered.",
+    "Mid-match, either fighter can invite an outside user to join their side for a tag-team or handicap match.",
 ]
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_\-]{3,16}$")
 CHAT_HISTORY_LIMIT = 200
 CHAT_MESSAGE_LIMIT = 500
+PM_MESSAGE_LIMIT = 450
+MATCH_TYPES = {"singles", "no-dq", "submission", "falls-count-anywhere"}
 
 
 class UserSession:
-    def __init__(self, username, ws):
+    def __init__(self, username, ws, profile):
         self.username = username
         self.ws = ws
         self.arena = None
         self.fight = None
         self.spectating = None
+        self.ignore_list = set(profile["ignoreList"])
+        self.standard_phrases = list(profile["standardPhrases"])
 
 
 users = {}
-arenas = {name: {"members": set(), "history": []} for name in ARENA_NAMES}
+arenas = {name: {"members": set(), "history": []} for names in AREAS.values() for name in names}
 challenges = {}
+team_invites = {}
 fights = {}
 
 
 def arena_summary():
-    return [{"name": n, "count": len(a["members"])} for n, a in arenas.items()]
+    return [
+        {"country": country, "arenas": [{"name": n, "count": len(arenas[n]["members"])} for n in names]}
+        for country, names in AREAS.items()
+    ]
+
+
+def fights_summary():
+    return [
+        {"id": f.id, "teamA": f.team_a, "teamB": f.team_b, "matchType": f.match_type}
+        for f in fights.values() if f.status == "active"
+    ]
 
 
 async def send(ws, payload):
@@ -65,6 +91,14 @@ async def broadcast(usernames, payload):
 
 async def broadcast_all(payload):
     await broadcast(list(users.keys()), payload)
+
+
+async def broadcast_fights_update():
+    await broadcast_all({"type": "fights_list", "fights": fights_summary()})
+
+
+def move_summaries():
+    return [{"id": m.id, "name": m.name, "energyCost": m.energy_cost} for m in MOVES]
 
 
 async def handle_join_arena(username, data):
@@ -103,13 +137,16 @@ async def handle_chat(username, data):
     history = arenas[session.arena]["history"]
     history.append(entry)
     del history[:-CHAT_HISTORY_LIMIT]
-    await broadcast(arenas[session.arena]["members"], {"type": "chat", **entry})
+    for member in arenas[session.arena]["members"]:
+        recipient = users.get(member)
+        if recipient and username not in recipient.ignore_list:
+            await send(recipient.ws, {"type": "chat", **entry})
 
 
 async def handle_challenge(username, data):
     session = users[username]
     target = data.get("target")
-    match_type = (data.get("matchType") or "singles")[:32]
+    match_type = data.get("matchType") if data.get("matchType") in MATCH_TYPES else "singles"
     target_session = users.get(target)
 
     if target == username:
@@ -121,6 +158,9 @@ async def handle_challenge(username, data):
     if session.fight or target_session.fight:
         await send(session.ws, {"type": "error", "message": "someone's already in a match"})
         return
+    if username in target_session.ignore_list:
+        await send(session.ws, {"type": "error", "message": "that user isn't taking challenges right now"})
+        return
 
     challenge_id = uuid.uuid4().hex[:8]
     challenges[challenge_id] = {"from": username, "to": target, "matchType": match_type, "ts": time.time()}
@@ -128,21 +168,13 @@ async def handle_challenge(username, data):
     await send(session.ws, {"type": "challenge_sent", "id": challenge_id, "to": target})
 
 
-def fights_summary():
-    return [{"id": f.id, "participants": f.order, "matchType": f.match_type} for f in fights.values() if f.status == "active"]
-
-
-async def broadcast_fights_update():
-    await broadcast_all({"type": "fights_list", "fights": fights_summary()})
-
-
-async def start_fight(usernames, match_type):
+async def start_fight(team_a, team_b, match_type):
     fight_id = uuid.uuid4().hex[:8]
-    fight = Fight(fight_id, usernames, match_type)
+    fight = Fight(fight_id, team_a, team_b, match_type)
     fights[fight_id] = fight
-    for u in usernames:
+    for u in fight.order:
         users[u].fight = fight_id
-    await broadcast(usernames, {"type": "fight_start", "fight": fight.public_state(), "moves": [{"id": m.id, "name": m.name, "energyCost": m.energy_cost} for m in MOVES]})
+    await broadcast(fight.order, {"type": "fight_start", "fight": fight.public_state(), "moves": move_summaries()})
     await broadcast_fights_update()
 
 
@@ -164,7 +196,18 @@ async def handle_respond_challenge(username, data):
         await send(session.ws, {"type": "error", "message": "match no longer available"})
         return
 
-    await start_fight([challenge["from"], username], challenge["matchType"])
+    await start_fight([challenge["from"]], [username], challenge["matchType"])
+
+
+async def finish_fight_bookkeeping(fight):
+    for side, other in (("a", "b"), ("b", "a")):
+        won = fight.winner_team == side
+        for u in fight.team_list(side):
+            accounts.record_result(u, won)
+            if u in users:
+                users[u].fight = None
+    fights.pop(fight.id, None)
+    await broadcast_fights_update()
 
 
 async def handle_fight_action(username, data):
@@ -174,7 +217,7 @@ async def handle_fight_action(username, data):
         await send(session.ws, {"type": "error", "message": "not in a match"})
         return
 
-    ok, err, _ = fight.try_action(username, data.get("moveId"))
+    ok, err, _ = fight.try_action(username, data.get("moveId"), data.get("target"))
     if not ok:
         await send(session.ws, {"type": "error", "message": err})
         return
@@ -183,11 +226,7 @@ async def handle_fight_action(username, data):
     await broadcast(recipients, {"type": "fight_update", "fight": fight.public_state()})
 
     if fight.status == "finished":
-        for u in fight.order:
-            if u in users:
-                users[u].fight = None
-        fights.pop(fight.id, None)
-        await broadcast_fights_update()
+        await finish_fight_bookkeeping(fight)
 
 
 async def handle_leave_fight(username, data):
@@ -197,13 +236,71 @@ async def handle_leave_fight(username, data):
         fight.forfeit(username)
         recipients = set(fight.order) | fight.spectators
         await broadcast(recipients, {"type": "fight_update", "fight": fight.public_state()})
-        for u in fight.order:
-            if u in users:
-                users[u].fight = None
-        fights.pop(fight.id, None)
-        await broadcast_fights_update()
+        await finish_fight_bookkeeping(fight)
     else:
         session.fight = None
+
+
+async def handle_invite_partner(username, data):
+    session = users[username]
+    fight = fights.get(session.fight)
+    if not fight or fight.status != "active":
+        await send(session.ws, {"type": "error", "message": "you're not in an active match"})
+        return
+    side = fight.team_of(username)
+    if fight.team_full(side):
+        await send(session.ws, {"type": "error", "message": "your team is already full"})
+        return
+
+    target = data.get("username")
+    target_session = users.get(target)
+    if not target_session or target == username:
+        await send(session.ws, {"type": "error", "message": "that user isn't online"})
+        return
+    if target in fight.fighters or target_session.fight:
+        await send(session.ws, {"type": "error", "message": "that user is already in a match"})
+        return
+    if username in target_session.ignore_list:
+        await send(session.ws, {"type": "error", "message": "that user isn't available"})
+        return
+
+    invite_id = uuid.uuid4().hex[:8]
+    team_invites[invite_id] = {"fightId": fight.id, "from": username, "target": target, "side": side}
+    await send(target_session.ws, {
+        "type": "team_invite",
+        "id": invite_id,
+        "from": username,
+        "teammates": fight.team_list(side),
+        "opponents": fight.team_list("b" if side == "a" else "a"),
+    })
+    await send(session.ws, {"type": "team_invite_sent", "to": target})
+
+
+async def handle_respond_team_invite(username, data):
+    session = users[username]
+    invite_id = data.get("id")
+    invite = team_invites.pop(invite_id, None)
+    if not invite or invite["target"] != username:
+        await send(session.ws, {"type": "error", "message": "invite no longer valid"})
+        return
+
+    inviter_session = users.get(invite["from"])
+    if not data.get("accept"):
+        if inviter_session:
+            await send(inviter_session.ws, {"type": "team_invite_declined", "by": username})
+        return
+
+    fight = fights.get(invite["fightId"])
+    if not fight or fight.status != "active" or fight.team_full(invite["side"]) or session.fight:
+        await send(session.ws, {"type": "error", "message": "that match is no longer available"})
+        return
+
+    fight.add_fighter(username, invite["side"])
+    users[username].fight = fight.id
+    others = (set(fight.order) | fight.spectators) - {username}
+    await broadcast(others, {"type": "fight_update", "fight": fight.public_state()})
+    await send(session.ws, {"type": "fight_start", "fight": fight.public_state(), "moves": move_summaries()})
+    await broadcast_fights_update()
 
 
 async def handle_list_fights(username, data):
@@ -219,8 +316,7 @@ async def handle_spectate(username, data):
         return
     fight.spectators.add(username)
     session.spectating = fight.id
-    await send(session.ws, {"type": "fight_start", "fight": fight.public_state(), "asSpectator": True,
-                             "moves": [{"id": m.id, "name": m.name, "energyCost": m.energy_cost} for m in MOVES]})
+    await send(session.ws, {"type": "fight_start", "fight": fight.public_state(), "asSpectator": True, "moves": move_summaries()})
 
 
 async def handle_stop_spectate(username, data):
@@ -232,6 +328,43 @@ async def handle_stop_spectate(username, data):
         session.spectating = None
 
 
+async def handle_private_message(username, data):
+    session = users[username]
+    target = data.get("to")
+    target_session = users.get(target)
+    text = (data.get("text") or "").strip()[:PM_MESSAGE_LIMIT]
+    if not text:
+        return
+    if not target_session:
+        await send(session.ws, {"type": "error", "message": "that user isn't online"})
+        return
+    entry = {"from": username, "text": text, "ts": time.time()}
+    await send(session.ws, {"type": "private_message_sent", "to": target, "text": text, "ts": entry["ts"]})
+    if username not in target_session.ignore_list:
+        await send(target_session.ws, {"type": "private_message_received", **entry})
+
+
+async def handle_set_ignore(username, data):
+    session = users[username]
+    target = data.get("target")
+    if not target or target == username:
+        return
+    if data.get("ignore"):
+        session.ignore_list.add(target)
+    else:
+        session.ignore_list.discard(target)
+    accounts.set_ignore_list(username, sorted(session.ignore_list))
+    await send(session.ws, {"type": "ignore_list_updated", "ignoreList": sorted(session.ignore_list)})
+
+
+async def handle_save_phrases(username, data):
+    session = users[username]
+    phrases = [p.strip()[:200] for p in (data.get("phrases") or []) if p.strip()][:20]
+    session.standard_phrases = phrases
+    accounts.set_standard_phrases(username, phrases)
+    await send(session.ws, {"type": "phrases_updated", "standardPhrases": phrases})
+
+
 HANDLERS = {
     "join_arena": handle_join_arena,
     "chat": handle_chat,
@@ -239,9 +372,14 @@ HANDLERS = {
     "respond_challenge": handle_respond_challenge,
     "fight_action": handle_fight_action,
     "leave_fight": handle_leave_fight,
+    "invite_partner": handle_invite_partner,
+    "respond_team_invite": handle_respond_team_invite,
     "list_fights": handle_list_fights,
     "spectate": handle_spectate,
     "stop_spectate": handle_stop_spectate,
+    "private_message": handle_private_message,
+    "set_ignore": handle_set_ignore,
+    "save_phrases": handle_save_phrases,
 }
 
 
@@ -259,15 +397,32 @@ async def cleanup(username):
             fight.forfeit(username)
             recipients = (set(fight.order) | fight.spectators) - {username}
             await broadcast(recipients, {"type": "fight_update", "fight": fight.public_state()})
-            for u in fight.order:
-                if u in users:
-                    users[u].fight = None
-            fights.pop(fight.id, None)
-            await broadcast_fights_update()
+            await finish_fight_bookkeeping(fight)
     if session.spectating:
         fight = fights.get(session.spectating)
         if fight:
             fight.spectators.discard(username)
+
+
+async def try_login(websocket, candidate, password):
+    if not USERNAME_RE.match(candidate):
+        await send(websocket, {"type": "error", "message": "username must be 3-16 letters/numbers/_/-"})
+        return None
+    if not password or len(password) < 4:
+        await send(websocket, {"type": "error", "message": "password must be at least 4 characters"})
+        return None
+    if candidate in users:
+        await send(websocket, {"type": "error", "message": "that username is already connected"})
+        return None
+
+    if accounts.account_exists(candidate):
+        if not accounts.verify_password(candidate, password):
+            await send(websocket, {"type": "error", "message": "wrong password for that username"})
+            return None
+    else:
+        accounts.create_account(candidate, password)
+
+    return candidate
 
 
 @app.websocket("/ws")
@@ -280,16 +435,20 @@ async def ws_endpoint(websocket: WebSocket):
             if data.get("type") != "login":
                 await send(websocket, {"type": "error", "message": "login required"})
                 continue
-            candidate = (data.get("username") or "").strip()
-            if not USERNAME_RE.match(candidate):
-                await send(websocket, {"type": "error", "message": "username must be 3-16 letters/numbers/_/-"})
-                continue
-            if candidate in users:
-                await send(websocket, {"type": "error", "message": "that username is already in use"})
-                continue
-            username = candidate
-            users[username] = UserSession(username, websocket)
-            await send(websocket, {"type": "welcome", "username": username, "news": NEWS, "arenas": arena_summary()})
+            username = await try_login(websocket, (data.get("username") or "").strip(), data.get("password") or "")
+
+        profile = accounts.get_profile(username)
+        users[username] = UserSession(username, websocket, profile)
+        await send(websocket, {
+            "type": "welcome",
+            "username": username,
+            "news": NEWS,
+            "arenas": arena_summary(),
+            "ignoreList": profile["ignoreList"],
+            "standardPhrases": profile["standardPhrases"],
+            "wins": profile["wins"],
+            "losses": profile["losses"],
+        })
 
         while True:
             data = await websocket.receive_json()
@@ -301,7 +460,8 @@ async def ws_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     finally:
-        await cleanup(username)
+        if username:
+            await cleanup(username)
 
 
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"

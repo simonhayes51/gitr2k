@@ -4,8 +4,10 @@ The original client had 14 unlabeled action buttons driven entirely by
 server-side logic that no longer exists (the real GITR2000 server is long
 gone, and none of its move list, point costs, or commentary text survived
 in the client binaries). This module is a fresh, from-scratch mechanic
-inspired by the original's shape (energy bar, points, live commentary) —
-not a recovered or reverse-engineered ruleset.
+inspired by the original's shape (energy bar, points, live commentary,
+mid-fight tag-team/handicap partner invites - see TfrmFight's
+"invite tag team partner" controls) - not a recovered or reverse-engineered
+ruleset.
 """
 
 import random
@@ -15,7 +17,7 @@ POINTS_TO_WIN = 100
 MAX_ENERGY = 100
 REGEN_PER_SEC = 3
 ACTION_COOLDOWN = 1.2
-REVERSAL_CHANCE = 0.15
+MAX_TEAM_SIZE = 2
 
 
 class Move:
@@ -99,22 +101,40 @@ class Fighter:
 
 
 class Fight:
-    def __init__(self, fight_id, usernames, match_type="singles"):
+    def __init__(self, fight_id, team_a, team_b, match_type="singles"):
         self.id = fight_id
         self.match_type = match_type
-        self.fighters = {u: Fighter(u) for u in usernames}
-        self.order = list(usernames)
+        self.team_a = list(team_a)
+        self.team_b = list(team_b)
+        self.fighters = {u: Fighter(u) for u in self.team_a + self.team_b}
         self.commentary = []
         self.spectators = set()
         self.status = "active"
-        self.winner = None
+        self.winner_team = None
         self.started_ts = time.time()
 
-    def opponent_of(self, username):
-        for u in self.order:
-            if u != username:
-                return u
-        return None
+    @property
+    def order(self):
+        return self.team_a + self.team_b
+
+    def team_of(self, username):
+        return "a" if username in self.team_a else "b"
+
+    def team_list(self, side):
+        return self.team_a if side == "a" else self.team_b
+
+    def opponents(self, username):
+        return self.team_b if username in self.team_a else self.team_a
+
+    def team_points(self, side):
+        return sum(self.fighters[u].points for u in self.team_list(side))
+
+    def team_full(self, side):
+        return len(self.team_list(side)) >= MAX_TEAM_SIZE
+
+    def add_fighter(self, username, side):
+        self.team_list(side).append(username)
+        self.fighters[username] = Fighter(username)
 
     def add_commentary(self, text):
         entry = {"text": text, "ts": time.time()}
@@ -123,7 +143,7 @@ class Fight:
             self.commentary = self.commentary[-100:]
         return entry
 
-    def try_action(self, username, move_id):
+    def try_action(self, username, move_id, target=None):
         """Returns (ok, error_or_None, commentary_text_or_None)."""
         if self.status != "active":
             return False, "fight is over", None
@@ -141,7 +161,8 @@ class Fight:
         if actor.energy < move.energy_cost:
             return False, "not enough energy", None
 
-        opp_name = self.opponent_of(username)
+        opponents = self.opponents(username)
+        opp_name = target if target in opponents else random.choice(opponents)
         opponent = self.fighters[opp_name]
         opponent.regen()
 
@@ -153,35 +174,38 @@ class Fight:
         if reversed_:
             opponent.points += gained
             text = random.choice(move.reversal_templates).format(a=username, d=opp_name)
-            beneficiary = opp_name
+            winning_side = self.team_of(opp_name)
         else:
             actor.points += gained
             text = random.choice(move.templates).format(a=username, d=opp_name)
-            beneficiary = username
+            winning_side = self.team_of(username)
 
         self.add_commentary(text)
 
-        if self.fighters[beneficiary].points >= POINTS_TO_WIN:
+        if self.team_points(winning_side) >= POINTS_TO_WIN:
             self.status = "finished"
-            self.winner = beneficiary
-            self.add_commentary(f"{beneficiary} wins the match!")
+            self.winner_team = winning_side
+            names = " & ".join(self.team_list(winning_side))
+            self.add_commentary(f"{names} win{'s' if len(self.team_list(winning_side)) == 1 else ''} the match!")
 
         return True, None, text
 
     def forfeit(self, username):
         if self.status != "active":
             return
-        opp = self.opponent_of(username)
+        losing_side = self.team_of(username)
+        winning_side = "b" if losing_side == "a" else "a"
         self.status = "finished"
-        self.winner = opp
-        self.add_commentary(f"{username} has left the match. {opp} wins by forfeit.")
+        self.winner_team = winning_side
+        self.add_commentary(f"{username} has left the match. {' & '.join(self.team_list(winning_side))} win by forfeit.")
 
     def public_state(self):
         return {
             "id": self.id,
             "matchType": self.match_type,
             "status": self.status,
-            "winner": self.winner,
-            "fighters": [self.fighters[u].public_state() for u in self.order],
+            "winnerTeam": self.winner_team,
+            "teamA": [self.fighters[u].public_state() for u in self.team_a],
+            "teamB": [self.fighters[u].public_state() for u in self.team_b],
             "commentary": [c["text"] for c in self.commentary[-30:]],
         }

@@ -15,16 +15,18 @@
   <main>
     <section id="view-login">
       <h2>Enter the arena</h2>
-      <p class="hint">Pick a name to join. No account needed - it's yours for this session only.</p>
-      <input id="username-input" placeholder="choose a name (3-16 chars)" maxlength="16" autocomplete="off">
+      <p class="hint">Username + password. First login claims the name; it's yours (with saved wins/ignore list/phrases) from then on.</p>
+      <input id="username-input" placeholder="username (3-16 chars)" maxlength="16" autocomplete="off">
+      <input id="password-input" type="password" placeholder="password (4+ chars)" autocomplete="off">
       <button id="login-btn">Enter</button>
       <p id="login-error" class="error"></p>
     </section>
 
     <section id="view-lobby" hidden>
       <div id="news-box" class="news"></div>
+      <p id="record-box" class="hint"></p>
       <h3>Arenas</h3>
-      <ul id="arena-list" class="list"></ul>
+      <div id="arena-tree"></div>
     </section>
 
     <section id="view-arena" hidden>
@@ -32,9 +34,11 @@
         <div class="chat-col">
           <h3 id="arena-name"></h3>
           <div id="chat-log" class="chat-log"></div>
+          <div id="phrase-row" class="phrase-row"></div>
           <form id="chat-form" autocomplete="off">
             <input id="chat-input" autocomplete="off" placeholder="say something...">
             <button type="submit">Send</button>
+            <button type="button" id="edit-phrases-btn" class="secondary">Phrases</button>
           </form>
         </div>
         <div class="side-col">
@@ -59,23 +63,18 @@
 
     <section id="view-fight" hidden>
       <h3 id="fight-title"></h3>
-      <div class="fighters">
-        <div class="fighter" id="fighter-0">
-          <div class="fname"></div>
-          <div class="bar-label">Energy</div>
-          <div class="bar energy"><div class="fill"></div></div>
-          <div class="bar-label">Points</div>
-          <div class="bar points"><div class="fill"></div></div>
-        </div>
-        <div class="vs">VS</div>
-        <div class="fighter" id="fighter-1">
-          <div class="fname"></div>
-          <div class="bar-label">Energy</div>
-          <div class="bar energy"><div class="fill"></div></div>
-          <div class="bar-label">Points</div>
-          <div class="bar points"><div class="fill"></div></div>
-        </div>
+      <div id="teams-container" class="teams-container"></div>
+
+      <div id="invite-row" class="invite-row" hidden>
+        <select id="invite-select"></select>
+        <button id="invite-btn" class="secondary">Invite to your side</button>
       </div>
+
+      <div id="target-row" class="invite-row" hidden>
+        <label for="target-select">Target:</label>
+        <select id="target-select"></select>
+      </div>
+
       <div id="commentary-log" class="commentary-log"></div>
       <div id="moves-grid" class="moves-grid"></div>
       <button id="leave-fight-btn" class="secondary">Leave match</button>
@@ -88,6 +87,38 @@
       <button id="challenge-accept">Accept</button>
       <button id="challenge-decline" class="secondary">Decline</button>
     </div>
+  </div>
+
+  <div id="team-invite-modal" class="modal" hidden>
+    <div class="modal-box">
+      <p id="team-invite-text"></p>
+      <button id="team-invite-accept">Accept</button>
+      <button id="team-invite-decline" class="secondary">Decline</button>
+    </div>
+  </div>
+
+  <div id="phrases-modal" class="modal" hidden>
+    <div class="modal-box">
+      <h4>Standard phrases</h4>
+      <p class="hint">One phrase per line. They'll show as quick-send buttons in arena chat.</p>
+      <textarea id="phrases-textarea" rows="8"></textarea>
+      <div>
+        <button id="phrases-save">Save</button>
+        <button id="phrases-cancel" class="secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="dm-panel" class="dm-panel" hidden>
+    <div class="dm-header">
+      <div id="dm-tabs" class="dm-tabs"></div>
+      <button id="dm-close" class="secondary">&times;</button>
+    </div>
+    <div id="dm-log" class="dm-log"></div>
+    <form id="dm-form" autocomplete="off">
+      <input id="dm-input" autocomplete="off" placeholder="private message...">
+      <button type="submit">Send</button>
+    </form>
   </div>
 
   <div id="toast" class="toast" hidden></div>
