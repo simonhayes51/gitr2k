@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+captures/*.log
+captures/*.jsonl
+!captures/README.md
+.env

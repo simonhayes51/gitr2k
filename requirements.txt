@@ -1,0 +1,2 @@
+# No external dependencies - this project uses only the Python standard library.
+# This file exists so Railway/Nixpacks reliably detects this as a Python project.
