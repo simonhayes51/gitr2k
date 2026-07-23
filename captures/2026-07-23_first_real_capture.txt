@@ -235,3 +235,21 @@ so it may not be a true confirmed-working terminator either.
 Added commands/bogus.py: experiment #1 for BOGUS itself - echo it back
 verbatim, to test whether acknowledging the keepalive unblocks whatever
 the client is actually waiting on.
+
+--- Fourteenth test session: BOGUS echo confirmed to have no effect ---
+Watched the same connection for 4+ minutes after sending
+GETARENA Test 0 20\r\nENDARENALIST\r\n. BOGUS\r\n repeated 6 times,
+exactly 40s apart (10:58:56, 10:59:36, 11:00:16, 11:00:56, 11:01:36,
+11:02:16), and our server echoed it back verbatim each time. No change
+in client behavior whatsoever - arena list never populated, no new
+message types appeared, BOGUS kept repeating on the same fixed interval
+regardless of our response.
+
+CONCLUSION: BOGUS is unrelated network-level keepalive noise (probably
+to prevent an idle-connection timeout somewhere in the path), not a
+protocol-semantic message the server needs to acknowledge. Echoing it
+back has no bearing on whether RETRARENALIST's response is accepted.
+
+RETRARENALIST's real response format remains unconfirmed after 7
+content attempts (6 ARENA-prefixed shapes that error, 1 GETARENA-prefixed
+shape that doesn't error but doesn't resolve either).
