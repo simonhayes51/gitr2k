@@ -444,3 +444,54 @@ confirming the dispatcher now returns b'MOVESDB\r\n' for REQMOVES.
 Awaiting real client reaction: does arena.exe accept this (does "Start"
 enable, does the activity log move past "retrieving moves database")?
 Does it show a visible/logged error? Does REQMOVES retry if rejected?
+
+--- Eighteenth session: MOVESDB experiment #1 REJECTED - corrected a mistaken disassembly reading ---
+Real test of the bare "MOVESDB\r\n" experiment deployed last session.
+arena.exe's activity log showed:
+
+    connected
+    retrieving moves database
+    Could not connect to main GITR server, message follows:
+    Exception: invalid response
+
+This is WORSE than the prior state (silent stuck-at-"retrieving moves
+database", no visible error) - our guess was rejected, and rejected
+loudly (a user-visible error dialog/log line), not just ignored.
+
+Went back to the TMovesDBCommand disassembly to find out why. The
+previous session's analysis concluded the response's first 7 characters
+"must" equal the literal "MOVESDB", based on a `je 0x461def` branch after
+a call to a comparison helper at VA 0x404064, with 0x461def assumed to
+be the "success" path. Re-examined 0x404064 directly this session:
+disassembling it confirms it's Delphi's `_LStrCmp` (byte-for-byte
+AnsiString comparison RTL helper) - a genuine `S1 = S2` equality check
+whose final instructions (`add eax,eax` on the computed length
+difference, or falling through a byte-compare chain) leave ZF=1 exactly
+when the two strings are FULLY equal (same length and content). Given
+that, and re-reading the call site with no `test`/`cmp` between the call
+and the `je` (meaning the flag comes directly from the call), the `je`
+firing means EQUAL, and 0x461def is actually the EXCEPTION-RAISING block,
+not the success path.
+
+CORRECTED CONCLUSION: sending exactly "MOVESDB" as the response's first 7
+characters causes arena.exe to REJECT it (raise "invalid response"). This
+is the opposite of what was concluded and acted on last session. It
+cross-validates cleanly against this session's real client reaction - we
+sent exactly that literal, and got exactly the exception this corrected
+reading predicts.
+
+Reverted commands/reqmoves.py to send no response again (verified locally:
+dispatching REQMOVES now returns None), since the "MOVESDB" guess is
+confirmed wrong and produced a more clearly broken-looking state than
+silence did. Updated docs/protocol.md, server/protocol.py to correct the
+prior (wrong) conclusion rather than leave it standing.
+
+REMAINING UNKNOWN: what response IS accepted. The success path (taken
+when the first 7 characters do NOT exactly equal "MOVESDB") hands the
+whole received line off to a further virtual method (VMT+0x9c) that
+wasn't disassembled - finding its real implementation needs locating the
+relevant class's VMT in the data section (a bigger undertaking than any
+single function traced so far in this project, e.g. MCC's OWNER ack or
+RETRCOUNTRIES's format). This is a natural pause point for REQMOVES,
+similar to where RETRARENALIST stalled - worth a decision on whether to
+invest further static-analysis effort here before the next live test.

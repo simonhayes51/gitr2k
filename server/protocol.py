@@ -161,23 +161,29 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
                                  "consistent with either order for a freshly-started, empty arena. "
                                  "See commands/setinfo.py."),
     "MOVESDB":        TokenInfo("MOVESDB", "arena.exe", CONFIRMED_DISASSEMBLY,
-                                 "Found (2026-07-23) as arena.exe's 'TMovesDBCommand' class name and "
-                                 "response-prefix literal, clustered with 'REQMOVES' and an 'invalid "
-                                 "response' error string. Previously misclassified in this project as "
-                                 "an unrelated Pascal-scripting keyword (alongside BEGIN/WHILE/FUNC/"
-                                 "SCRIPT/PLUGIN/ACTIONSDB/SWEARDB) - that was WRONG for this token. "
-                                 "A near-identical sibling class exists for REQSWLIST/SWEARDB. "
-                                 "CONFIRMED (disassembly): the REQMOVES response must start with this "
-                                 "exact 7-char prefix. See commands/reqmoves.py."),
+                                 "Found (2026-07-23) as arena.exe's 'TMovesDBCommand' class name, "
+                                 "clustered with 'REQMOVES' and an 'invalid response' error string. "
+                                 "Previously misclassified in this project as an unrelated "
+                                 "Pascal-scripting keyword (alongside BEGIN/WHILE/FUNC/SCRIPT/PLUGIN/"
+                                 "ACTIONSDB/SWEARDB) - that was WRONG for this token, it's a real "
+                                 "protocol-related class. A near-identical sibling class exists for "
+                                 "REQSWLIST/SWEARDB. CORRECTED (runtime+disassembly cross-validated, "
+                                 "2026-07-23): the response must NOT be an exact match to the literal "
+                                 "'MOVESDB' (first 7 chars) - sending exactly that triggers arena.exe's "
+                                 "'invalid response' exception, confirmed both by re-reading the "
+                                 "_LStrCmp-based equality check correctly and by the real client's "
+                                 "reaction to the (now known wrong) first experiment. What the "
+                                 "response SHOULD look like instead is still UNKNOWN. See "
+                                 "commands/reqmoves.py."),
     "REQMOVES":       TokenInfo("REQMOVES", "arena.exe", CONFIRMED_RUNTIME,
                                  "Sent bare immediately after SETINFO on the same connection, with no "
                                  "arguments: 'REQMOVES\\r\\n'. Matches arena.exe's 'retrieving moves "
                                  "database' UI status text. CONFIRMED (disassembly, 2026-07-23): "
                                  "arena.exe's TMovesDBCommand reads exactly one response line and "
-                                 "requires it to start with the literal 7-char prefix 'MOVESDB', or "
-                                 "raises an internal 'invalid response' error. Payload past the prefix "
-                                 "still UNKNOWN. Corrects an earlier note that dismissed 'MOVESDB' as an "
-                                 "unrelated scripting keyword. See commands/reqmoves.py."),
+                                 "rejects it (raises 'invalid response') if it exactly matches the "
+                                 "7-char literal 'MOVESDB' - the opposite of what an earlier reading of "
+                                 "this same disassembly concluded. What response IS accepted remains "
+                                 "UNKNOWN; no response currently sent. See commands/reqmoves.py."),
 }
 
 
