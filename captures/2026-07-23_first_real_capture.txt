@@ -730,3 +730,27 @@ marker rather than silently rewritten, per operator instruction.
 
 No server-side code changes or live test this session - purely static
 analysis and documentation correction. REQMOVES still sends no response.
+
+--- Nineteenth session: baseline re-confirmation, BOGUS generalized to REQMOVES ---
+Repeat test against the current (reverted-to-silent REQMOVES) server code
+- no server-side changes since the last commit, this was purely a
+re-confirmation run. All previously-established behavior held:
+
+  - MCC -> OWNER Test ack still works (activity log: "connected")
+  - SETPORT 7072 / SETINFO 0 15 still parsed and recorded correctly
+  - REQMOVES still gets no response (as intended - reverted last session)
+  - arena.exe still stuck on "retrieving moves database", Start disabled
+  - METAARENALIST/RETRCOUNTRIES/RETRARENALIST all behave exactly as
+    before (International node populates, arena list stays stuck on
+    GETARENA experiment #7) - no change, still paused
+
+One new, small, confirmable fact: BOGUS\r\n fired again at 14:27:26.252,
+~38.3s after REQMOVES was seen unanswered (14:26:47.934). Previously
+BOGUS's ~40s periodic-while-unanswered behavior was only confirmed in
+the context of an unanswered RETRARENALIST. This extends that finding:
+BOGUS is a generic client-side keepalive that fires while ANY request
+sits unanswered, not something specific to arena discovery. Updated the
+BOGUS token entry in server/protocol.py and the startup state-machine
+table in docs/protocol.md section 4 to record this.
+
+No server-side code changes this session.

@@ -388,7 +388,8 @@ stateDiagram-v2
 | Moves DB request | `REQMOVES` | one line | **Blocking** - a single `ReadLn` call executes immediately after sending, in the same function | → reject or `?` | CONFIRMED (disassembly) for the blocking `ReadLn`; CONFIRMED (runtime) for the request itself |
 | Moves DB response check | *(server's response line)* | must not exactly equal `"MOVESDB"` | N/A | → `InvalidResponseRaised` if equal; → `?` (unknown) if not | CONFIRMED (disassembly + runtime cross-validated) for the rejection rule |
 | ??? (accept path) | unknown | unknown | unknown | unknown | **UNCONFIRMED** - no evidence connects this to `REQACTIONS`, `WINDB`, or any other specific stage |
-| ??? (post-reject behavior) | none observed | N/A | N/A | arena.exe's UI shows the error and stalls; whether it retries REQMOVES (like `BOGUS` retried when a request went unanswered) has not been tested for a long enough window to confirm or rule out | UNKNOWN |
+| ??? (post-reject behavior) | none observed | N/A | N/A | arena.exe's UI shows the error and stalls; whether it retries REQMOVES itself has not been tested for a long enough window to confirm or rule out | UNKNOWN |
+| While `REQMOVES` sits unanswered | none - client-side only | N/A | N/A | `BOGUS` fires periodically (~38-40s), same as previously observed for an unanswered `RETRARENALIST` | **CONFIRMED (runtime, 2026-07-23):** generalizes the earlier `BOGUS`-is-generic-keepalive conclusion - it fires for any unanswered request, not one specific to arena discovery |
 
 **Objective 5 - audit of prior claims.** See the corrections applied throughout §2, §4 (subsystem architecture), and §5 of this document (each edit marked in place, not silently changed) - every statement that asserted a `Moves -> Actions` (or further) chain, or attributed a finding to "VMT reconstruction", has been corrected to either cite the (solid) Execute-array finding instead, or marked UNCONFIRMED where no independent evidence survives this pass.
 

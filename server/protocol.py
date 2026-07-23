@@ -143,7 +143,11 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
                                  "RESOLVED (2026-07-23): observed over 6 cycles / 4+ minutes with a "
                                  "fixed ~40s period regardless of server response; echoing it back "
                                  "had zero effect. Concluded to be unrelated network-level keepalive "
-                                 "noise, not protocol-semantic."),
+                                 "noise, not protocol-semantic. CONFIRMED (runtime, 2026-07-23, later "
+                                 "session): the same ~38-40s periodic firing also occurs while REQMOVES "
+                                 "sits unanswered, not just RETRARENALIST - generalizes the keepalive "
+                                 "conclusion to any unanswered request, not one specific to arena "
+                                 "discovery."),
     "SETPORT":        TokenInfo("SETPORT", "arena.exe", CONFIRMED_RUNTIME,
                                  "Sent bare (no CLAUTH envelope) on the same connection immediately "
                                  "after arena.exe receives the MCC/OWNER acknowledgment: "
