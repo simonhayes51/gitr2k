@@ -33,21 +33,27 @@ format itself.
 
     ENDARENALIST\r\n   (nothing else)
 
-Known risks: if this ALSO errors, ENDARENALIST might not actually be
-this response's terminator at all (recall it was only ever an ASSUMED
-pairing with METAARENALIST, never itself confirmed - METAARENALIST's
-own response has never been validated by client reaction either, since
-the client always moved on to RETRCOUNTRIES regardless of what
-METAARENALIST got back). If it works cleanly, the next round should add
-back a single ARENA line, probably needing an extra field the way
-COUNTRY did (a host/port pair the client would need to actually connect
-to the arena is a reasonable next guess, since nothing else in the
-protocol so far carries that information).
+EXPERIMENT #2 RESULT (2026-07-23): bare ENDARENALIST\r\n alone (empty
+arena list) worked cleanly - no error, status just stayed at "retrieving
+arena list" (no crash, no "an error has occured."). This confirms
+ENDARENALIST alone is a valid terminator here, mirroring what we found
+for RETRCOUNTRIES/ENDCOUNTRYLIST. The fault is specifically in the ARENA
+line's own format.
 
-We don't track which country an arena belongs to yet (only one
-placeholder country exists at all, from commands/retrcountries.py), so
-every registered arena would be returned regardless of the requested
-country name, once ARENA lines are reintroduced.
+EXPERIMENT #3 (now live): reintroduce a single ARENA line, but minimal -
+just the name, no player/max-player fields - mirroring the exact
+step-by-step approach that found COUNTRY's fix (name-only first, then
+add fields back one at a time instead of guessing a whole shape at once).
+
+    ARENA <name>\r\n
+    ENDARENALIST\r\n
+
+Known risks: if this also errors, the problem isn't the trailing
+players/maxplayers fields at all - more likely something about ARENA
+entries needing host/port info to be minimally valid, or a completely
+different field the client requires before it'll accept an ARENA line.
+If it works cleanly, the next round should add back player_count, then
+max_players, one at a time.
 """
 
 
@@ -70,11 +76,14 @@ def handle(raw: bytes, client_info: dict, context: dict):
         port=client_info["port"],
         note=(
             f"RETRARENALIST request for country={country!r}. Sending "
-            f"EXPERIMENT #2: bare ENDARENALIST only, no ARENA lines, to "
-            f"isolate why experiment #1 produced 'an error has occured.' "
-            f"({len(arenas)} arena(s) registered but deliberately omitted "
-            f"this round - see docstring in commands/retrarenalist.py)."
+            f"EXPERIMENT #3: ARENA <name> only (no players/maxplayers "
+            f"fields), plus ENDARENALIST, to isolate whether the trailing "
+            f"numeric fields are the problem ({len(arenas)} arena(s) "
+            f"registered - names included, other fields omitted this round "
+            f"- see docstring in commands/retrarenalist.py)."
         ),
     )
 
-    return b"ENDARENALIST\r\n"
+    lines = [f"ARENA {arena['name']}\r\n" for arena in arenas]
+    lines.append("ENDARENALIST\r\n")
+    return "".join(lines).encode("ascii", errors="replace")

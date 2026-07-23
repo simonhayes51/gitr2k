@@ -144,3 +144,14 @@ Experiment #2 (next): bare ENDARENALIST\r\n alone (empty arena list, no
 ARENA lines), applying the same isolation technique that found
 RETRCOUNTRIES's fix, to check whether the basic framing/terminator is
 right before troubleshooting the ARENA line format itself.
+
+--- Eighth test session: RETRARENALIST experiment #2 confirmed working ---
+Sent: ENDARENALIST\r\n (empty arena list, no ARENA lines)
+Client reaction: no error - status stayed at "retrieving arena list",
+no crash. Confirms ENDARENALIST alone is a valid terminator here too,
+mirroring RETRCOUNTRIES/ENDCOUNTRYLIST. Fault isolated to the ARENA
+line's own format specifically.
+
+Experiment #3 (next): a single minimal ARENA <name>\r\n line (no
+players/maxplayers fields), mirroring the exact step-by-step approach
+that found COUNTRY's fix.
