@@ -754,3 +754,87 @@ BOGUS token entry in server/protocol.py and the startup state-machine
 table in docs/protocol.md section 4 to record this.
 
 No server-side code changes this session.
+
+--- Static analysis (no live test): TGITRObjectBroker fully reversed via DFM, not VMT ---
+Per operator instruction, started from arena.exe's compiled DFM resource
+(RT_RCDATA "TFRMGITRSERVER") instead of any VMT-based approach. Extracted
+it via pefile and wrote a binary-DFM parser (TPF0 format) to walk the real
+component tree, property assignments, and the form's published-fields RTTI
+table (name -> 4-byte offset pairs, a standard documented Delphi structure
+found clustered right next to the already-known published-methods table).
+
+KEY FINDINGS, all directly confirmed (DFM tree, RTTI tables, and clean
+disassembly - no VMT arithmetic anywhere):
+
+1. Two SEPARATE network components exist on frmGITRServer, previously
+   conflated: GMCC (class TGITRMCCClient - corrects the earlier guessed
+   name "TGITRClient") is the OUTBOUND connection to the meta-server,
+   where REQMOVES/TMovesDBCommand and the whole TCommandBase family live.
+   GITRServer (class TGITRServer) is arena.exe's OWN INBOUND TCP server
+   (port 7072) that accepts OTHER players' gitr2k.exe connections joining
+   this arena. GITRServer has property ObjectBroker = GITRObjectBroker.
+
+2. TGITRObjectBroker's OnAfterCreateObject = "GITRObjectBrokerAfterCreateObject"
+   (confirmed byte-exact from the DFM's vaIdent value - the leading "!" a
+   strings-tool artifact turned out to just be the length byte 0x21=33
+   rendering as a printable character). Located the real function via the
+   published-METHODS RTTI table (same reliable technique as GMCCArenaOwner
+   earlier) at VA 0x49e9f8 - a clean, real function.
+
+3. GITRObjectBrokerAfterCreateObject is a per-connection object-TYPE
+   DISPATCHER: checks the newly-created object via 4 explicit "is" tests
+   using Delphi's real _IsClass runtime helper (0x403124, confirmed by its
+   own logic - walks the class-parent chain, genuine polymorphic check):
+   TGITRBaseChatObject (regular participant), TGITRBaseFightObject (a
+   distinct fight-specific type), TGITROperatorObject (moderator),
+   TGITRPrimaryOpObject (owner-level, wires ~10 callback pairs). For each
+   matched type it wires function-pointer callbacks into the new object.
+
+4. Found the exact field offsets for all 5 "Database" components via the
+   published-fields RTTI table: ChatDatabase=0x2e0, AdminDatabase=0x32c,
+   ActionDatabase=0x334, FightDatabase=0x338, sdb=0x33c. Real classes (from
+   the DFM): ChatDatabase/AdminDatabase = TJHDataStorage (uncompressed);
+   ActionDatabase/FightDatabase/sdb = TJHCompressedDataStorage (BZIP2,
+   block size 9).
+
+5. CONFIRMED: FightDatabase is read and passed into function 0x45b634 -
+   the ONLY call site to that function anywhere in the binary - but ONLY
+   inside the TGITRBaseChatObject branch (regular connected users), not
+   fight objects. 0x45b634 calls a record-count helper and loops in steps
+   of 3, consistent with loading persisted per-record data into a
+   newly-connected user's object.
+
+6. CONFIRMED: AdminDatabase is read and stored into the new object's own
+   field_0x2c, ONLY inside the TGITROperatorObject branch.
+
+7. ActionDatabase and ChatDatabase are NOT referenced anywhere inside
+   GITRObjectBrokerAfterCreateObject. ChatDatabase IS used elsewhere (a
+   separate, unrelated function at 0x49ec94 reads it and appears to log
+   something to the lbLog listbox).
+
+8. CONFIRMED: "sdb" has ZERO code references anywhere in the binary - the
+   only two occurrences of the string are the DFM declaration and the
+   RTTI table entry itself. Two candidate +0x33c byte matches from a raw
+   scan were checked and are both false positives (one inside the RTTI
+   table's own data, one past the end of the CODE section in a different
+   PE section entirely).
+
+DIRECT ANSWERS TO THE SPECIFIC QUESTIONS ASKED:
+- Does sdb correspond to SWEARDB? Plausible by name and by shared class
+  family with ActionDatabase/FightDatabase, but NO confirmed code path
+  connects it to TSwearDBCommand/REQSWLIST - and it may be entirely
+  unused/vestigial in this build given the total absence of references.
+- Is FightDatabase populated by REQMOVES despite its name? NO supporting
+  evidence, and real evidence against it: FightDatabase is wired into
+  TGITRBaseChatObject via GITRServer/TGITRObjectBroker (the arena's own
+  INBOUND connection subsystem) - a completely different object graph
+  from GMCC/TMovesDBCommand (the OUTBOUND meta-server protocol, where
+  REQMOVES lives). No cross-reference connects TMovesDBCommand's code to
+  FightDatabase's offset, to GITRObjectBrokerAfterCreateObject, or to
+  0x45b634. The "moves database" UI text and "FightDatabase" component
+  name appear to be an unrelated naming coincidence.
+
+This rules out one specific hypothesis about REQMOVES's unresolved
+response content but does not itself resolve what that content should be.
+Full write-up added to docs/protocol.md section 7. No server-side code
+changes or live test this session - purely DFM/RTTI-based static analysis.
