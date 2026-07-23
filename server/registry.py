@@ -55,24 +55,32 @@ class ArenaRegistry:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._arenas = {}  # key: (host_ip, arena_port) -> ArenaEntry
+        self._arenas = {}  # key: arena name -> ArenaEntry
 
     def register(self, name: str, host_ip: str, arena_port: int) -> ArenaEntry:
-        key = (host_ip, arena_port)
+        """
+        Keyed by name, not (host_ip, arena_port): CONFIRMED (runtime,
+        2026-07-23) that arena.exe's outbound IP as seen by the meta
+        server can differ between reconnects (Railway's internal proxy
+        assigns a new source IP each time), which caused this to key
+        every re-registration as a brand-new arena and produce visible
+        duplicates in METAARENALIST responses. Name is the only stable
+        identifier MCC actually gives us.
+        """
         with self._lock:
-            entry = self._arenas.get(key)
+            entry = self._arenas.get(name)
             if entry is None:
                 entry = ArenaEntry(name, host_ip, arena_port)
-                self._arenas[key] = entry
+                self._arenas[name] = entry
             else:
-                entry.name = name
+                entry.host_ip = host_ip
+                entry.arena_port = arena_port
                 entry.touch()
             return entry
 
-    def unregister(self, host_ip: str, arena_port: int):
-        key = (host_ip, arena_port)
+    def unregister(self, name: str):
         with self._lock:
-            self._arenas.pop(key, None)
+            self._arenas.pop(name, None)
 
     def list_arenas(self):
         with self._lock:
