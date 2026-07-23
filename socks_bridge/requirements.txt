@@ -1,0 +1,2 @@
+# No external dependencies - stdlib asyncio only.
+# This file exists so Railway/Nixpacks reliably detects this as a Python project.
