@@ -63,8 +63,9 @@ The presence of a string in the compiled code confirms the program *recognizes* 
 | `SETPORT` | arena.exe | client→server, sent bare immediately after `MCC`/`OWNER` | CONFIRMED (runtime, 2026-07-23) — new token, not previously known | CONFIRMED (runtime) — `SETPORT <port>\r\n`, arena.exe self-reporting its real listening port (observed: `7072`), see §5 |
 | `SETINFO` | arena.exe | client→server, sent bare immediately after `SETPORT` | CONFIRMED (runtime, 2026-07-23) — new token, not previously known | CONFIRMED (runtime) for shape — `SETINFO <a> <b>\r\n` (observed `0 15`); STRONG INFERENCE only for field meaning/order (assumed player_count, max_players), see §5 |
 | `REQMOVES` | arena.exe | client→server, sent bare immediately after `SETINFO`, no arguments | CONFIRMED (runtime, 2026-07-23) — new token, not previously known | CONFIRMED (runtime+disassembly, 2026-07-23) — response is a single line, and must **not** exactly match the 7-char literal `MOVESDB` or arena.exe raises an "invalid response" exception; what response IS accepted is UNKNOWN, see §4/§5 |
-| `MOVESDB` | arena.exe | n/a — a rejection trigger, not a response prefix | CONFIRMED (disassembly, 2026-07-23) — `TMovesDBCommand` class name, found clustered with `REQMOVES` and an "invalid response" error string | CONFIRMED (runtime+disassembly, cross-validated) that sending this exact literal as the response is **wrong** - triggers rejection, corrected after an initial (wrong) reading assumed the opposite. VMT reconstruction further shows this is stage one of a chained sequence continuing into `REQACTIONS`/`ACTIONSDB`, see §4/§5 |
-| `REQACTIONS` / `ACTIONSDB` | arena.exe | client→server / rejection trigger | CONFIRMED (disassembly, 2026-07-23) — found via VMT reconstruction as the next stage chained directly after `MOVESDB`'s success branch, identical code shape | Not yet observed on the wire (unreachable while `REQMOVES` itself is unanswered); same rejection rule as `MOVESDB` applies, see §4 |
+| `MOVESDB` | arena.exe | n/a — a rejection trigger, not a response prefix | CONFIRMED (disassembly, 2026-07-23) — `TMovesDBCommand` class name, found clustered with `REQMOVES` and an "invalid response" error string | CONFIRMED (runtime+disassembly, cross-validated) that sending this exact literal as the response is **wrong** - triggers rejection, corrected after an initial (wrong) reading assumed the opposite. **Corrected (2026-07-23, fifth pass):** an earlier claim that this chains into `REQACTIONS`/`ACTIONSDB` via a specific virtual-dispatch mechanism was RETRACTED - a rigorous cross-reference audit found zero evidence connecting the two. `TMovesDBCommand.Execute` is confirmed to share a 4-entry function-pointer table (VA `0x461686`) with `TActionsDBCommand.Execute`/`TSwearDBCommand.Execute`/a `WINDB` handler, but whether/how any of them actually invoke each other is UNCONFIRMED - see §4 fifth pass |
+| `REQACTIONS` / `ACTIONSDB` | arena.exe | client→server / rejection trigger | CONFIRMED (disassembly, 2026-07-23) — `TActionsDBCommand.Execute` (VA `0x461b2c`), found as the 2nd entry of the same 4-entry Execute-pointer table as `TMovesDBCommand.Execute` (VA `0x461686`) - found via raw-data cross-reference, not VMT arithmetic | Not yet observed on the wire. **Corrected (2026-07-23, fifth pass):** whether this is reached from `MOVESDB`'s accept branch is UNCONFIRMED, not established as previously stated - see §4 fifth pass. Same rejection-on-exact-name-match rule as `MOVESDB` applies to its own response independently of that |
+| `WINDB` | arena.exe | client→server, formatted 2-argument command | CONFIRMED (disassembly, 2026-07-23, fifth pass) — 4th entry of the same Execute-pointer table (VA `0x4624a8`), previously unknown | CONFIRMED (disassembly): sends `WINDB <Arg1> <Arg2>` via the same SendCommand slot as the other three; does **not** wait for or process any reply (full function body traced, no `ReadLn`-shaped call exists). Whether/when it's invoked is UNCONFIRMED - see §4 fifth pass |
 
 **Correction (2026-07-23):** an earlier pass of this document lumped `MOVESDB` in with `arena.exe`'s Pascal-like scripting keywords (`BEGIN`, `WHILE`, `FUNC`, `SCRIPT`, `PLUGIN`, `ACTIONSDB`, `SWEARDB`) as unrelated to the network protocol. That was **wrong for `MOVESDB` specifically** - disassembly now shows it's the real response-prefix literal for a genuine protocol command class, `TMovesDBCommand`, directly tied to the confirmed-runtime `REQMOVES` token (see §4). The other keywords in that list (`BEGIN`/`WHILE`/`FUNC`/`SCRIPT`/`PLUGIN`/`ACTIONSDB`) remain believed unrelated - they belong to an embedded scripting/plugin engine - but this should be treated as unconfirmed rather than dismissed outright, given this correction. `SWEARDB` (with request token `REQSWLIST`) turns out to be a near-identical sibling command class to `TMovesDBCommand`, likely a swear-word/chat-filter list - also a real protocol command, not a scripting keyword.
 
@@ -191,8 +192,10 @@ TMetaMessageCommand     <- concrete command
 TArenaOwnerCommand      <- concrete command
 TUserCommand            <- concrete command
 TMovesDBCommand         <- concrete command  (already known)
-TActionsDBCommand       <- concrete command  (already known, chained from Moves)
-TSwearDBCommand         <- concrete command  (already known, name only so far)
+TActionsDBCommand       <- concrete command  (already known; shares an Execute-pointer table with
+                                               Moves - see §4 fifth pass; chain relationship to Moves
+                                               is UNCONFIRMED, corrected from an earlier wrong claim)
+TSwearDBCommand         <- concrete command  (already known; same table, same caveat)
 ```
 
 **Mapping classes to known protocol tokens - STRONG INFERENCE from naming, cross-checked against independent earlier findings where possible:**
@@ -205,10 +208,11 @@ TSwearDBCommand         <- concrete command  (already known, name only so far)
 | `TArenaOwnerCommand` | `OWNER` / `GRANTED` | Name match to the already-disassembled `GMCCArenaOwner` handler (§4 above) - this is the class behind the CONFIRMED-working MCC ack |
 | `TUserCommand` | `USERENTER` / `USERLEAVE` | Name match only, not independently cross-checked |
 | `TMovesDBCommand` | `REQMOVES` / `MOVESDB` | CONFIRMED (disassembly + runtime), this section |
-| `TActionsDBCommand` | `REQACTIONS` / `ACTIONSDB` | CONFIRMED (disassembly), chained directly from Moves's accept branch |
-| `TSwearDBCommand` | `REQSWLIST` / `SWEARDB` | Name/string match only - not yet reached via disassembly of a chain link (see below) |
+| `TActionsDBCommand` | `REQACTIONS` / `ACTIONSDB` | CONFIRMED (disassembly) as a real function sharing an Execute-pointer table with Moves (§4 fifth pass). **Corrected:** "chained directly from Moves's accept branch" was RETRACTED - no evidence found for this on re-audit |
+| `TSwearDBCommand` | `REQSWLIST` / `SWEARDB` | CONFIRMED (disassembly) as a real function in the same Execute-pointer table (§4 fifth pass) - chain relationship to Moves/Actions UNCONFIRMED, same correction as above |
+| (new) `Windb.Execute` | `WINDB` | CONFIRMED (disassembly, fifth pass) as the table's 4th entry - see §4 fifth pass for the full reversal |
 
-**Inheritance tree - STRONG INFERENCE.** All eight concrete classes are believed direct descendants of `TCommandBase` (not a narrower intermediate "database command" base) - no separate `TDBCommand`/`TDatabaseCommand`-style name was found anywhere in the string table between `TUserCommand` and `TMovesDBCommand`, or anywhere else. `TCommandParser` + `TCommandClassArray` look like a classic name-keyed factory/dispatch pair (`TCommandParser` reads a line, looks up the leading token in `TCommandClassArray`, constructs/dispatches to the matching `TCommandBase` descendant) - notably the same architecture this project's own `server/protocol.py` `Dispatcher` independently arrived at, which is a nice, unplanned validation of the overall design approach used in this repo.
+**Inheritance tree - STRONG INFERENCE for class membership; the factory/dispatch relationship below is RETRACTED, see fifth pass.** All eight concrete classes are believed direct descendants of `TCommandBase` (not a narrower intermediate "database command" base) - no separate `TDBCommand`/`TDatabaseCommand`-style name was found anywhere in the string table between `TUserCommand` and `TMovesDBCommand`, or anywhere else. This subsection originally also claimed `TCommandParser`+`TCommandClassArray` form a name-keyed factory/dispatch pair that constructs/invokes the concrete command classes. **Corrected (2026-07-23, fifth pass):** `TCommandParser`'s own descriptor record was directly checked and contains no reference to the Execute-pointer table (§4 fifth pass, objective 3) - the dispatch relationship shown below is UNCONFIRMED, not established fact.
 
 ```mermaid
 classDiagram
@@ -216,13 +220,13 @@ classDiagram
         <<abstract, inferred>>
     }
     class TCommandParser {
-        <<infrastructure, inferred>>
+        <<infrastructure, inferred - dispatch relationship below UNCONFIRMED>>
     }
     class TCommandClassArray {
-        <<infrastructure, inferred: name to class registry>>
+        <<infrastructure, inferred: name to class registry - UNCONFIRMED>>
     }
-    TCommandParser ..> TCommandClassArray : looks up token in
-    TCommandClassArray ..> TCommandBase : constructs instances of
+    TCommandParser ..> TCommandClassArray : relationship UNCONFIRMED (fifth pass)
+    TCommandClassArray ..> TCommandBase : relationship UNCONFIRMED (fifth pass)
 
     TCommandBase <|-- TGetIPCommand
     TCommandBase <|-- TErrorCommand
@@ -232,12 +236,16 @@ classDiagram
     TCommandBase <|-- TMovesDBCommand
     TCommandBase <|-- TActionsDBCommand
     TCommandBase <|-- TSwearDBCommand
+    TCommandBase <|-- Windb_Execute_0x4624a8
 
-    TMovesDBCommand ..> TActionsDBCommand : chain mechanism UNCONFIRMED (see fourth-pass correction)
-    TActionsDBCommand ..> TSwearDBCommand : chain mechanism UNCONFIRMED (see fourth-pass correction)
+    TMovesDBCommand ..> TActionsDBCommand : chain mechanism UNCONFIRMED (fifth-pass audit found zero evidence)
+    TActionsDBCommand ..> TSwearDBCommand : chain mechanism UNCONFIRMED (never asserted with evidence)
+    TMovesDBCommand -- TActionsDBCommand : CONFIRMED - share a 4-entry Execute-pointer table at VA 0x461686
+    TActionsDBCommand -- TSwearDBCommand : CONFIRMED - same table
+    TSwearDBCommand -- Windb_Execute_0x4624a8 : CONFIRMED - same table
 ```
 
-**Shared virtual methods - INCONCLUSIVE, flagged honestly rather than asserted.** Attempted to compare VMT slots across `TMovesDBCommand`/`TActionsDBCommand`/`TSwearDBCommand` directly (to see which methods are literally inherited vs overridden) by reconstructing each class's VMT the same way as before (class-name-string cross-reference + brute-forced negative offset). The technique that worked cleanly for `TMovesDBCommand` (and, consistently, for `TMetaMessageCommand`/`TArenaOwnerCommand`/`TUserCommand`/`TGetIPCommand`) produced clearly-garbage, non-CODE-section values for `TActionsDBCommand` and `TSwearDBCommand` specifically - most likely because the single raw-pointer match found for those two classes' class-name strings isn't actually their `vmtClassName` slot (a coincidental 4-byte collision is plausible in a ~700KB binary), rather than the offset genuinely varying per class. **Not resolved this pass** - would need a more rigorous VMT-recovery method (e.g. cross-checking against a known-shared method's address, or proper Delphi-aware tooling) to answer reliably. Given this, no confident claim is made here about which specific methods are shared vs overridden beyond what's already directly disassembled (`Execute`/`SendCommand`/`ReadLn`-shaped logic is clearly duplicated per-class in the compiled output, whether via override or per-class code generation).
+**Shared virtual methods - RETRACTED, superseded by the fifth pass below.** This subsection originally claimed the VMT-slot-comparison technique "worked cleanly" for `TMovesDBCommand`/`TMetaMessageCommand`/`TArenaOwnerCommand`/`TUserCommand`/`TGetIPCommand` and only failed for `TActionsDBCommand`/`TSwearDBCommand`. The fifth-pass audit below shows the underlying technique itself was unsound for all of them (the "VMT" being read was actually per-class descriptor-record data, not a true Delphi VMT, and reading into it far enough hits embedded string data even for the classes that looked "clean"). No claim is made here about which methods are shared vs overridden - see the fifth pass for what's actually confirmed instead (the Execute-pointer array, found via a sound technique).
 
 **Does `Self+0xC4` point to one common database object? UNKNOWN - trace attempted, inconclusive, paused on operator instruction.** See the fourth-pass correction immediately below for what was found and why it wasn't conclusive.
 
@@ -293,6 +301,97 @@ All four addresses were independently disassembled and are real, clean functions
 
 **Status: paused here on operator instruction** (2026-07-23) given the demonstrated unreliability of further manual VMT-style reconstruction without Delphi-RTTI-aware tooling (IDR, or IDA/Ghidra with a Delphi plugin) or a live debugger, neither available in this environment. The solid Execute-pointer-array finding stands; the `Self+0xC4` object's exact class, its own fields, and whether it's shared or per-instance remain open questions for a future pass with better tooling.
 
+### Fifth pass (2026-07-23) - exhaustive cross-reference audit (no VMT arithmetic), WINDB fully reversed, dispatcher search
+
+Per operator instruction: prioritize independently-verifiable evidence over further reconstruction, treat the table at `0x461686` as the anchor (not any reconstructed VMT), and explicitly avoid brute-forcing offsets or inferring class relationships from arithmetic. Everything below uses only raw byte/pointer cross-referencing and direct disassembly.
+
+**Objective 1 - cross-reference audit of the table at `0x461686`.** Searched exhaustively for every way code in this binary could reference the table or its four entries: raw absolute-pointer occurrences (any 4-byte literal, any alignment, anywhere in the file), direct `CALL rel32`/`JMP rel32` instructions targeting each address, and SIB-indexed addressing using `0x461686` as a literal base (the classic `call [reg*4+0x461686]` computed-jump-table shape). Also checked whether anything *writes* to the table's slot addresses (a runtime-registration pattern).
+
+| Address | Raw pointer refs outside the table | Direct `CALL`/`JMP` refs | Indexed/SIB refs with this literal base | Written-to anywhere |
+|---|---|---|---|---|
+| `0x461686` (table base) | none | none | none | none |
+| `0x461d34` (Moves.Execute) | none (only the table's own slot 0) | none | none | none |
+| `0x461b2c` (Actions.Execute) | none (only the table's own slot 1) | none | none | none |
+| `0x461f38` (Swear.Execute) | none (only the table's own slot 2) | none | none | none |
+| `0x4624a8` (Windb.Execute) | none (only the table's own slot 3) | none | none | none |
+
+**CONFIRMED (exhaustive byte-level search) - a clean negative:** nothing else anywhere in this binary holds a static reference to the table or to any of its four entries. No constructor, no registration routine, no loop, and no direct call site exists for any of them.
+
+- **Static or dynamically registered?** The four pointers are compiled directly into the file at a fixed offset - not written by any runtime code (confirmed: nothing writes to these addresses either). The table's *contents* are static compiled data. Whether it's genuinely "iterated as a table" by something, versus being four unrelated classes' method-table slots that merely land at the same relative position in memory, is **UNCONFIRMED** either way - both are consistent with the evidence, and choosing between them would require VMT/RTTI-aware tooling this pass deliberately avoids.
+- **Who iterates it? Linear or conditional?** No evidence of iteration (no loop construct references this address range) and no evidence of any code path connecting the four entries in either direction. **This corrects the framing of the second-pass VMT-reconstruction claim and the third-pass architecture diagram**, both of which asserted a chain relationship (`Moves -> Actions -> Swear`) that this more rigorous audit found zero supporting evidence for. That chain relationship is now UNCONFIRMED, not merely "unreliable" - it should be treated as an open question, not a downgraded-but-still-likely fact.
+
+**Objective 2 - WINDB (`0x4624a8`) fully reversed.** Full disassembly, `0x4624a8` to its `ret` at `0x46251f` (reproduced in full below - this is the entire function body, nothing omitted):
+
+```
+4624a8: push ebp / mov ebp,esp / sub esp,0xc / push ebx / push esi
+4624b2: [ebp-0xc] := 0                      ; destination buffer for the built string, zeroed
+4624b5: [ebp-0x8] := ecx                    ; Arg2 (2nd explicit method parameter)
+4624b8: [ebp-0x4] := edx                    ; Arg1 (1st explicit method parameter)
+4624bb: esi := eax                          ; Self
+4624bd: call 0x404108 on [ebp-0x4]          ; string-management helper (ref-count/prep), called on Arg1
+4624c5: call 0x404108 on [ebp-0x8]          ; same helper, called on Arg2
+4624cd: (SEH frame setup)
+4624db: push "WINDB "  (VA 0x462538, 6 bytes incl. trailing space)
+4624e0: push [ebp-0x4]                       ; Arg1
+4624e3: push " "        (VA 0x462548, 1 byte)
+4624e8: push [ebp-0x8]                       ; Arg2
+4624eb: lea eax,[ebp-0xc] / mov edx,4 / call 0x404014   ; 4-argument string concatenation (System._LStrCatN)
+4624f8: edx := [ebp-0xc]                     ; the built string
+4624fb: eax := esi (Self) / ecx := [eax] / call [ecx+0x84]   ; SendCommand-shaped virtual call - same slot used to send REQMOVES/REQACTIONS/REQSWLIST
+462505: (SEH cleanup)
+462512: lea eax,[ebp-0xc] / mov edx,3 / call 0x403cf8   ; finalize/free the temporary concatenated string
+46251f: ret
+```
+
+Traced `0x404014` directly (rather than assuming argument order) - it is Delphi's `System._LStrCatN` (concatenate N strings), confirmed by disassembling its body: it reads the pushed arguments back in the **same order they were pushed** (first-pushed processed first, appended first into the result buffer), both in its length-summing pass and its copy pass. Given the push order above (`"WINDB "`, Arg1, `" "`, Arg2), the resulting command string is:
+
+```
+"WINDB " + Arg1 + " " + Arg2
+```
+
+i.e. `WINDB <Arg1> <Arg2>` - a plain space-delimited two-argument command, consistent with the naming convention used everywhere else in this protocol (`OWNER <name>`, `COUNTRY <name> <count>`, etc.), sent via the same `+0x84` "SendCommand" virtual slot the three DB-chain handlers also use.
+
+Answers to the specific questions asked:
+
+| Question | Answer | Confidence |
+|---|---|---|
+| Exact strings referenced | `"WINDB "` (6 bytes, VA `0x462538`, trailing space baked in - same compiled-constant pattern as `METAMSG `) and `" "` (1 byte, VA `0x462548`) | CONFIRMED (disassembly) |
+| Exact command sent | `WINDB <Arg1> <Arg2>\r\n` (the `\r\n` is presumed added by the shared `SendCommand` method, as with the other three handlers - not visible in this function itself) | CONFIRMED (disassembly) for the `WINDB <Arg1> <Arg2>` part; the `\r\n` termination is STRONG INFERENCE by analogy, not directly seen in this function |
+| Argument formatting | `Arg1` = the method's first explicit parameter (`edx` at entry), `Arg2` = second (`ecx` at entry); concatenated in that order with a literal space between them, no other formatting/padding | CONFIRMED (disassembly, via tracing `_LStrCatN`'s actual argument-processing order) |
+| Response handling | **None.** No `ReadLn`-shaped call, no comparison logic, nothing resembling response processing exists anywhere in this function | CONFIRMED (disassembly - the full function body is reproduced above, nothing omitted) |
+| Does it wait for a reply? | **No.** The function sends and returns immediately (SEH cleanup, then `ret`) | CONFIRMED (disassembly) |
+| Does it participate in startup? | **UNKNOWN.** Per objective 1's audit, this function (like the other three) has zero static references anywhere - there is no evidence either way for when or whether it's invoked during startup | UNKNOWN - explicitly not guessed |
+
+**Objective 3 - locating the dispatcher.** Per operator instruction, VMT reconstruction was avoided entirely; searched instead from references to the table, constructor references, registration routines, and loop constructs (all covered by objective 1's exhaustive search above) - **no dispatcher was found**. `TCommandParser`'s own class-name string was cross-referenced the same reliable way used for the DB-chain classes (search for its compiled shortstring's address as raw data) - it has exactly one external reference, at VA `0x457fa8`, which sits inside a data block of function pointers (`0x4010b0`, `0x4031d0`-`0x4031e4`, `0x402f40`, `0x402f54`, `0x458354`, `0x458520`, `0x458300`, `0x45838c`, `0x4584b8`) - **none of which equal the table base or any of its four entries**. So `TCommandParser`'s own descriptor record does not reference this table either, by direct check (not offset inference). **Conclusion: the real startup dispatcher that invokes these four `Execute` functions was not located by any of the permitted techniques.** This should be recorded as a genuine unknown, not inferred to be "definitely a VMT" or "definitely something else" - both remain equally unproven.
+
+**Objective 4 - startup state machine, confirmed evidence only:**
+
+```mermaid
+stateDiagram-v2
+    [*] --> MCC_sent : CONFIRMED (runtime)
+    MCC_sent --> OWNER_received : CONFIRMED (runtime) - server sends OWNER name
+    OWNER_received --> SETPORT_sent : CONFIRMED (runtime) - non-blocking, arena.exe does not wait for a server reply
+    SETPORT_sent --> SETINFO_sent : CONFIRMED (runtime) - non-blocking, sometimes coalesced with SETPORT in one TCP segment
+    SETINFO_sent --> REQMOVES_sent : CONFIRMED (runtime) - non-blocking, sometimes coalesced with REQMOVES in one TCP segment
+    REQMOVES_sent --> AwaitingResponse : CONFIRMED (disassembly) - TMovesDBCommand.Execute performs exactly one blocking ReadLn call right after sending
+    AwaitingResponse --> InvalidResponseRaised : CONFIRMED (runtime+disassembly) - if response's first 7 chars exactly equal "MOVESDB"
+    AwaitingResponse --> Unknown : UNCONFIRMED - what response IS accepted, and what happens next, is not established by any current evidence
+    InvalidResponseRaised --> [*] : CONFIRMED (runtime, observed) - arena.exe shows an explicit error dialog/log line; no further activity observed in that test session
+    Unknown --> [*]
+```
+
+| Stage | Command sent | Expected response | Blocking? | Next transition | Confidence |
+|---|---|---|---|---|---|
+| Registration | `CLAUTH <name> <pass> MCC <ver>` | `OWNER <name>` | Blocking (arena.exe's subsequent messages never precede receiving this) | → `SETPORT` | CONFIRMED (runtime) |
+| Port report | `SETPORT <port>` | none | Non-blocking (observed coalesced with the next message in one TCP segment) | → `SETINFO` | CONFIRMED (runtime) |
+| Stats report | `SETINFO <a> <b>` | none | Non-blocking (observed coalesced with the next message) | → `REQMOVES` | CONFIRMED (runtime) |
+| Moves DB request | `REQMOVES` | one line | **Blocking** - a single `ReadLn` call executes immediately after sending, in the same function | → reject or `?` | CONFIRMED (disassembly) for the blocking `ReadLn`; CONFIRMED (runtime) for the request itself |
+| Moves DB response check | *(server's response line)* | must not exactly equal `"MOVESDB"` | N/A | → `InvalidResponseRaised` if equal; → `?` (unknown) if not | CONFIRMED (disassembly + runtime cross-validated) for the rejection rule |
+| ??? (accept path) | unknown | unknown | unknown | unknown | **UNCONFIRMED** - no evidence connects this to `REQACTIONS`, `WINDB`, or any other specific stage |
+| ??? (post-reject behavior) | none observed | N/A | N/A | arena.exe's UI shows the error and stalls; whether it retries REQMOVES (like `BOGUS` retried when a request went unanswered) has not been tested for a long enough window to confirm or rule out | UNKNOWN |
+
+**Objective 5 - audit of prior claims.** See the corrections applied throughout §2, §4 (subsystem architecture), and §5 of this document (each edit marked in place, not silently changed) - every statement that asserted a `Moves -> Actions` (or further) chain, or attributed a finding to "VMT reconstruction", has been corrected to either cite the (solid) Execute-array finding instead, or marked UNCONFIRMED where no independent evidence survives this pass.
+
 **Dead end found (2026-07-23):** traced the `"METAARENALIST"` string constant (in gitr2k.exe) to a tiny function at `0x54D01C` that does nothing but return that literal (classic Delphi codegen for `Result := 'METAARENALIST'` — almost certainly a command-name getter on one class in a family of protocol-message classes). Static cross-reference analysis (radare2, full `aaa` auto-analysis, 5353 functions found) turned up **zero callers** of that function. This strongly suggests it's invoked through a Delphi virtual-method-table slot (polymorphic dispatch) rather than a direct call instruction — tracing that needs Delphi-VMT/RTTI-aware tooling (e.g. IDA with Delphi analysis, or "Interactive Delphi Reconstructor") that wasn't available for this pass. Static disassembly is stalled here for now; see §5/§6 for the empirical approach taken instead.
 
 ---
@@ -310,7 +409,8 @@ All four addresses were independently disassembled and are real, clean functions
 | `RETRARENALIST` | client→server | country name | `\r\n` terminated, no envelope | `RETRARENALIST International\r\n` | gitr2k.exe requesting the actual per-arena details for one country, sent automatically right after a working `RETRCOUNTRIES` response - not previously known at all, not even as a compiled string constant we'd noticed | **Seven attempts, none confirmed working yet. PAUSED (2026-07-23) per project direction** - work shifted to the `MCC` handshake instead, see below. Six straight `ARENA`-prefixed shapes error outright. **Experiment #7 (`GETARENA <name> <players> <max>\r\n`)** doesn't error, but doesn't resolve either - the client just keeps waiting (confirmed via the periodic `BOGUS` keepalive, since resolved as unrelated noise, see §2/§3). **Correction:** experiment #2 (bare `ENDARENALIST`, empty list) was only ever confirmed "doesn't error immediately" - never actually confirmed to complete, so its "CONFIRMED WORKING" status upgrade earlier was premature. | CONFIRMED (runtime) for the request; response format still unconfirmed after 7 attempts, paused |
 | `SETPORT` | client→server | port | space, `\r\n` terminated, no envelope | `SETPORT 7072\r\n` | arena.exe self-reporting its real listening port, sent bare right after `MCC`/`OWNER` | **CONFIRMED (runtime, 2026-07-23):** parsed and recorded into `ArenaRegistry`, replacing the `DEFAULT_ARENA_PORT` placeholder (see `commands/setport.py`, `server/registry.py`). Correlated to the right arena via `context["arena_name"]`. No response sent by the server. | **CONFIRMED (runtime)** for the request; no response attempted/needed so far |
 | `SETINFO` | client→server | two integers | space, `\r\n` terminated, no envelope | `SETINFO 0 15\r\n` | arena.exe self-reporting live stats, sent bare right after `SETPORT` | **CONFIRMED (runtime, 2026-07-23)** for the shape; parsed and recorded as `(player_count, max_players)` - **STRONG INFERENCE only** for that field order/meaning, since both observed values (`0`, `15`) are consistent with either order for a freshly-started, empty arena. See `commands/setinfo.py`. No response sent. | **CONFIRMED (runtime)** for the request shape; field semantics STRONG INFERENCE |
-| `REQMOVES` | client→server | *(none - sent bare)* | `\r\n` terminated, no envelope | `REQMOVES\r\n` | arena.exe requesting some kind of moves/moveset database, sent bare right after `SETINFO`; matches the "retrieving moves database" UI status text | **Experiment #1 REJECTED (2026-07-23):** bare `MOVESDB\r\n`, informed by an initial (incorrect) reading of the `TMovesDBCommand` disassembly. Real client reaction: an explicit `"Could not connect to main GITR server... Exception: invalid response"` error - worse than the prior silent "stuck" state. Corrected disassembly + VMT reconstruction (§4) confirms this was the *expected* outcome of an exact match to `"MOVESDB"`, and that `REQMOVES` is only the first stage of a chained sequence continuing into `REQACTIONS`/`ACTIONSDB`. Reverted to no response while a real second guess is designed; what content actually satisfies the "not rejected" branch is still completely UNKNOWN. | CONFIRMED (runtime) for the request; first response guess CONFIRMED WRONG, chained multi-stage structure CONFIRMED (disassembly), no replacement guess deployed yet |
+| `REQMOVES` | client→server | *(none - sent bare)* | `\r\n` terminated, no envelope | `REQMOVES\r\n` | arena.exe requesting some kind of moves/moveset database, sent bare right after `SETINFO`; matches the "retrieving moves database" UI status text | **Experiment #1 REJECTED (2026-07-23):** bare `MOVESDB\r\n`, informed by an initial (incorrect) reading of the `TMovesDBCommand` disassembly. Real client reaction: an explicit `"Could not connect to main GITR server... Exception: invalid response"` error - worse than the prior silent "stuck" state. Corrected disassembly confirms this was the *expected* outcome of an exact match to `"MOVESDB"` - CONFIRMED via `TMovesDBCommand.Execute`'s own body alone, independent of any VMT claim. **Corrected (2026-07-23, fifth pass):** an earlier claim that `REQMOVES` is "the first stage of a chained sequence continuing into REQACTIONS/ACTIONSDB" was RETRACTED after a rigorous cross-reference audit found zero evidence of any such chain - see §4 fifth pass. Reverted to no response while a real second guess is designed; what content actually satisfies the "not rejected" branch is still completely UNKNOWN. | CONFIRMED (runtime) for the request; first response guess CONFIRMED WRONG; multi-stage chain structure UNCONFIRMED (previously asserted, now retracted); no replacement guess deployed |
+| `WINDB` (new, 2026-07-23, fifth pass) | client→server | two arguments | space-delimited (`"WINDB " + Arg1 + " " + Arg2`), `\r\n` presumed by analogy | `WINDB Test 5\r\n` (illustrative - real argument values not yet observed) | Purpose UNKNOWN - not yet seen on the wire. Found purely via disassembly: 4th entry of the same Execute-pointer table as `REQMOVES`/`REQACTIONS`/`REQSWLIST`'s handlers (VA `0x461686`), at VA `0x4624a8` | No response handling exists in this handler at all - CONFIRMED (disassembly, full function body traced) that it sends and returns immediately, never waiting for a reply. Whether/when arena.exe invokes it is UNCONFIRMED | CONFIRMED (disassembly) for command shape and no-reply-wait behavior; whether/when it's sent is UNKNOWN |
 
 ---
 
@@ -327,6 +427,6 @@ All four addresses were independently disassembled and are real, clean functions
 9. ~~**Is there a separate per-country terminator, or does `ENDCOUNTRYLIST` alone end everything?**~~ **ANSWERED (2026-07-23):** `ENDCOUNTRYLIST` alone ends the `RETRCOUNTRIES` response - CONFIRMED working with `COUNTRY <name> <arena_count>\r\n` lines and no nested `ARENA`/`ENDARENALIST` inside it. Arenas for a given country are fetched separately, lazily, via `RETRARENALIST <country>` - see §3.
 10. **What is the real `RETRARENALIST` response format?** New as of the sixth 2026-07-23 session. An experimental response reusing `ARENA`/`ENDARENALIST` is deployed; awaiting the next real client reaction.
 11. ~~**What does `BOGUS` mean, and does it need a response?**~~ **RESOLVED (2026-07-23):** confirmed periodic (every ~40s) regardless of server response; echoing it back had zero effect. Unrelated network-level keepalive noise, not protocol-semantic. No further action needed.
-12. **What is the real `REQMOVES` response format, and does arena.exe's "Start" button ever enable?** Framing bug fixed (2026-07-23) - `REQMOVES` now correctly reaches `commands/reqmoves.py` and is logged. Static analysis found `TMovesDBCommand` in arena.exe; **experiment #1 (bare `MOVESDB\r\n`) was tried and confirmed REJECTED** by real client reaction. VMT reconstruction (§4, second pass) confirmed this is one link in a chained startup sequence (`Moves -> Actions -> ...`) and generalized the rejection rule (never let the response's first N characters exactly equal that stage's own `<NAME>DB` literal) - but the actual *accepted* content is still completely UNKNOWN, and finding it needs identifying and disassembling the class behind `Self+0xC4`, a comparably-sized task to the VMT reconstruction just completed. No second experiment deployed yet pending a decision on how much further to invest here versus resuming `RETRARENALIST` (also still open, also paused) or trying a lower-confidence pragmatic guess now.
+12. **What is the real `REQMOVES` response format, and does arena.exe's "Start" button ever enable?** Framing bug fixed (2026-07-23) - `REQMOVES` now correctly reaches `commands/reqmoves.py` and is logged. Static analysis found `TMovesDBCommand` in arena.exe; **experiment #1 (bare `MOVESDB\r\n`) was tried and confirmed REJECTED** by real client reaction. **Corrected (2026-07-23, fifth pass):** an earlier claim (from a "VMT reconstruction" pass) that this is one link in a chained startup sequence (`Moves -> Actions -> ...`) was RETRACTED after a rigorous, VMT-arithmetic-free cross-reference audit found zero evidence connecting the two - see §4 fifth pass for the full audit (raw pointer refs, direct call/jmp refs, and indexed-addressing refs all checked, all negative). What's now confirmed instead: `TMovesDBCommand.Execute`, `TActionsDBCommand.Execute`, `TSwearDBCommand.Execute`, and a previously-unknown `WINDB` handler share a 4-entry function-pointer table (VA `0x461686`), found via a sound technique (searching for a known address as raw data) - but no dispatcher, constructor, or loop referencing that table was found anywhere, so how (or whether) any of them get invoked relative to each other remains genuinely open. Tracing `Self+0xC4` was attempted and paused (per operator instruction) without resolving its class. **Status: no further static-analysis avenue has been identified for finding the accepted `REQMOVES` response content** - this needs either a live debugger/Delphi-RTTI-aware tool (not available in this environment) or a disclosed, informed guess accepting the same risk as experiment #1. No second experiment deployed yet.
 
 Update the table in §5 and the confidence markers throughout this document as each of these gets resolved — and please don't upgrade a confidence marker without a corresponding file in `captures/` (for runtime) or a specific address/offset (for disassembly) to point to.

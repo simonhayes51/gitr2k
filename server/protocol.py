@@ -199,15 +199,21 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
                                  "Execute-pointer array at VA 0x461686. Not yet observed on the wire - see "
                                  "ACTIONSDB."),
     "WINDB":          TokenInfo("WINDB", "arena.exe", CONFIRMED_DISASSEMBLY,
-                                 "Found (2026-07-23, fourth pass) as the 4th entry in the same Execute-"
-                                 "pointer array as REQMOVES/REQACTIONS/REQSWLIST's handlers (VA 0x461686), "
-                                 "at VA 0x4624a8. Compiled as the literal 'WINDB ' (6 bytes, trailing space "
-                                 "baked in, same pattern as the confirmed METAMSG constant). Its handler "
-                                 "does not follow the request/read-line/reject shape of the other three - "
-                                 "it builds a formatted string (2 args concatenated with 'WINDB ' and a "
-                                 "trailing space) and sends it via the SendCommand-shaped virtual call. "
-                                 "Purpose UNKNOWN - name suggests a match win/loss or results database, "
-                                 "not yet otherwise investigated."),
+                                 "Found (2026-07-23) as the 4th entry in the same Execute-pointer array as "
+                                 "REQMOVES/REQACTIONS/REQSWLIST's handlers (VA 0x461686), at VA 0x4624a8. "
+                                 "FULLY REVERSED (2026-07-23, fifth pass) - complete function body traced "
+                                 "start to ret, nothing omitted: builds 'WINDB ' (VA 0x462538, 6 bytes, "
+                                 "trailing space) + Arg1 + ' ' (VA 0x462548) + Arg2 via System._LStrCatN "
+                                 "(traced directly to confirm argument order - it processes pushed args in "
+                                 "push order, not reversed), giving the exact command 'WINDB <Arg1> <Arg2>' "
+                                 "(Arg1=method's edx-param, Arg2=ecx-param), sent via the same +0x84 "
+                                 "SendCommand slot as the other three. CONFIRMED: no ReadLn-shaped call or "
+                                 "any response-processing logic exists anywhere in this function - it sends "
+                                 "and returns immediately, does not wait for a reply. Whether/when arena.exe "
+                                 "invokes it (participates in startup or not) is UNCONFIRMED - like the "
+                                 "other three, it has zero external cross-references anywhere in the binary "
+                                 "(no CALL/JMP site, no raw pointer outside the table itself). Purpose "
+                                 "UNKNOWN - name suggests a match win/loss or results report."),
     "REQMOVES":       TokenInfo("REQMOVES", "arena.exe", CONFIRMED_RUNTIME,
                                  "Sent bare immediately after SETINFO on the same connection, with no "
                                  "arguments: 'REQMOVES\\r\\n'. Matches arena.exe's 'retrieving moves "

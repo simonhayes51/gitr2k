@@ -653,3 +653,80 @@ retraction clearly (kept, not deleted, so the record shows the mistake)
 and add the new Execute-array/WINDB findings. No server-side code changes
 this session - REQMOVES still sends no response, per the prior session's
 correction.
+
+--- Static analysis (no live test): exhaustive cross-reference audit, WINDB fully reversed ---
+Per operator direction ("prioritise new independently-verifiable evidence
+over deeper speculation"), treated the 4-entry Execute-pointer table found
+last session (VA 0x461686) as the anchor and worked outward from it using
+ONLY raw byte/pointer cross-referencing and direct disassembly - no VMT
+offset arithmetic, no assumed RTTI layout, per explicit instruction.
+
+OBJECTIVE 1 (cross-reference audit of the table): searched exhaustively
+for every way code could reference the table or its four entries - raw
+absolute-pointer occurrences (any alignment, anywhere in the file), direct
+CALL rel32/JMP rel32 instructions targeting each address, and SIB-indexed
+addressing using the table base as a literal (the classic computed-jump-
+table pattern). Also checked whether anything WRITES to the table's slot
+addresses (a runtime-registration pattern).
+
+RESULT: a clean, confirmable negative across the board. Nothing else in
+this ~700KB binary holds a static reference to the table base or any of
+its four entries - no constructor, no registration routine, no loop, no
+direct call site, and nothing writes to it. This means: the table's
+CONTENTS are static compiled data (confirmed), but whether it's genuinely
+"iterated by a dispatcher" versus being four unrelated classes' method-
+slots that happen to land at the same relative memory position cannot be
+determined without VMT/RTTI-aware tooling - and, critically, THE PREVIOUS
+SESSION'S "Moves chains to Actions" CLAIM HAS ZERO SUPPORTING EVIDENCE
+under this more rigorous audit. This is stronger than "unreliable" - it's
+now a confirmed absence of evidence, not merely a retracted guess.
+
+OBJECTIVE 2 (fully reverse WINDB, VA 0x4624a8): traced the ENTIRE function
+body start-to-ret, nothing omitted. Confirmed exact strings: "WINDB "
+(VA 0x462538, 6 bytes, trailing space baked in - same pattern as the
+confirmed METAMSG constant) and " " (VA 0x462548, 1 byte). Directly
+disassembled the concatenation helper (0x404014, Delphi's System._LStrCatN)
+to determine the REAL argument processing order rather than assuming it -
+confirmed it processes pushed arguments in the SAME order they were
+pushed (not reversed), giving the exact command string:
+
+    "WINDB " + Arg1 + " " + Arg2   =   WINDB <Arg1> <Arg2>
+
+(Arg1 = the method's edx-parameter, Arg2 = its ecx-parameter), sent via
+the same +0x84 "SendCommand" virtual slot the other three DB-chain
+handlers also use. CONFIRMED: no ReadLn-shaped call or any response-
+processing logic exists anywhere in this function - it sends and returns
+immediately (SEH cleanup then ret), never waiting for a reply. Whether/
+when arena.exe actually invokes WINDB (startup or elsewhere) is UNKNOWN -
+per objective 1's audit, it has zero external cross-references anywhere,
+same as the other three.
+
+OBJECTIVE 3 (locate the dispatcher, avoiding VMT reconstruction entirely):
+searched from references to the table (covered by objective 1, all
+negative), and independently checked TCommandParser's own descriptor
+record (found via the same reliable class-name-string cross-reference
+technique used for the DB-chain classes) - it contains several function
+pointers but NONE of them equal the table base or any of its four
+entries. CONCLUSION: no dispatcher was found by any of the permitted
+techniques. This is recorded as a genuine unknown, not resolved either
+direction.
+
+OBJECTIVE 4 (startup state machine, confirmed evidence only): built a
+state diagram covering MCC -> OWNER -> SETPORT -> SETINFO -> REQMOVES ->
+(reject on exact "MOVESDB" match, CONFIRMED) -> ? (UNCONFIRMED). Every
+transition tagged with its actual confidence level (CONFIRMED runtime,
+CONFIRMED disassembly, or explicitly UNCONFIRMED) - added to
+docs/protocol.md section 4, fifth pass.
+
+OBJECTIVE 5 (audit protocol.md): reviewed the entire document and fixed
+every statement that depended on the retracted VMT reconstruction or
+asserted the "Moves chains to Actions" claim without surviving evidence -
+in the section 2 token table (MOVESDB/ACTIONSDB rows, new WINDB row),
+the subsystem-architecture class list and table, the "shared virtual
+methods" paragraph, the class diagram, the section 5 command table
+(REQMOVES row, new WINDB row), and section 6's open question #12. Each
+correction was made in place with an explicit "Corrected (fifth pass)"
+marker rather than silently rewritten, per operator instruction.
+
+No server-side code changes or live test this session - purely static
+analysis and documentation correction. REQMOVES still sends no response.
