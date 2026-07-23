@@ -15,25 +15,28 @@ contains COUNTRY, ARENA, and ENDCOUNTRYLIST as compiled literals in
 gitr2k.exe. These give real anchors for a response guess, unlike the
 METAARENALIST response, which had none.
 
-GUESSED response shape (NOT confirmed, active experiment #2):
-    COUNTRY <name>\r\n            (one per country)
-    ARENA <name> <players> <maxplayers>\r\n   (per arena in that country)
-    ENDCOUNTRYLIST\r\n
+EXPERIMENT #2 RESULT (2026-07-23): the COUNTRY/ARENA/ENDCOUNTRYLIST guess
+above got as far as the client actually processing it - but the "Select
+Arena" dialog then showed "an error has occured." (a real, generic
+Delphi error-display string found in the binary) instead of populating.
+Static disassembly hit the same VMT-dispatch wall as METAARENALIST (an
+exhaustive scan of every CALL rel32 in gitr2k.exe's code section found
+zero direct call sites to either the METAARENALIST getter or this error
+string's setter function - both are only reachable through Delphi
+virtual dispatch, untraceable without Delphi-RTTI-aware tooling).
 
-We have no real country data at all (arena.exe's MCC registration didn't
-include one), so every registered arena is grouped under a single
-placeholder country for this first test.
+So this is EXPERIMENT #3: send only the bare terminator, no COUNTRY/
+ARENA lines at all, to isolate whether the error comes from the
+per-item line format specifically, or from something more basic (the
+terminator itself, a missing count prefix, etc). One variable changed
+at a time so the client's reaction stays informative.
 
-Known risks with this guess:
-    - No evidence for whether ARENA lines nest directly under the
-      preceding COUNTRY line (assumed here) or are listed some other way.
-    - No evidence for whether a per-country ENDARENALIST is expected
-      before the next COUNTRY line, or whether ENDCOUNTRYLIST alone
-      terminates everything.
-    - Placeholder country name ("International") is arbitrary.
+    ENDCOUNTRYLIST\r\n   (nothing else)
+
+Known risks with this guess: still no evidence either way about the
+count/framing question above - this is a diagnostic probe, not a belief
+that this is the real format.
 """
-
-PLACEHOLDER_COUNTRY = "International"
 
 
 def handle(raw: bytes, client_info: dict, context: dict):
@@ -46,16 +49,12 @@ def handle(raw: bytes, client_info: dict, context: dict):
         ip=client_info["ip"],
         port=client_info["port"],
         note=(
-            f"RETRCOUNTRIES request. Sending EXPERIMENTAL guessed response "
-            f"with {len(arenas)} registered arena(s) grouped under a single "
-            f"placeholder country - see docstring in commands/retrcountries.py."
+            f"RETRCOUNTRIES request. Sending EXPERIMENT #3: bare ENDCOUNTRYLIST "
+            f"only, no COUNTRY/ARENA lines, to isolate why experiment #2 "
+            f"produced 'an error has occured.' ({len(arenas)} arena(s) "
+            f"registered but deliberately omitted this round - see docstring "
+            f"in commands/retrcountries.py)."
         ),
     )
 
-    lines = [f"COUNTRY {PLACEHOLDER_COUNTRY}\r\n"]
-    for arena in arenas:
-        max_players = arena["max_players"] if arena["max_players"] is not None else 20
-        lines.append(f"ARENA {arena['name']} {arena['player_count']} {max_players}\r\n")
-    lines.append("ENDCOUNTRYLIST\r\n")
-
-    return "".join(lines).encode("ascii", errors="replace")
+    return b"ENDCOUNTRYLIST\r\n"

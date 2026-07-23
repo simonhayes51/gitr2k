@@ -51,3 +51,27 @@ section 3 and commands/retrcountries.py for the follow-up experimental
 response now deployed (COUNTRY/ARENA/ENDCOUNTRYLIST shape), which is
 untested as of this file being written - awaiting the next real client
 reaction.
+
+--- Third test session: experiment #2 (COUNTRY/ARENA/ENDCOUNTRYLIST) result ---
+Server correctly responded to RETRCOUNTRIES this time (registry duplicate
+bug also fixed - exactly one "Test" arena now, not two):
+
+  < COUNTRY International\r\nARENA Test 0 20\r\nENDCOUNTRYLIST\r\n
+
+Client's "Select Arena" dialog reacted with a real, generic Delphi error
+string found in the binary: "an error has occured." (status bar text),
+instead of populating or continuing to wait. This is meaningful negative
+feedback - the client processed the response far enough to hit a
+validation/parsing failure, rather than ignoring it or timing out again.
+
+Traced the error string to a small function (VA 0x54eea8 in
+gitr2k.exe) that sets a status label to this text and toggles another
+control. Exhaustively scanned every CALL rel32 instruction in the
+entire CODE section for both this function and the METAARENALIST getter
+(0x54d01c) - zero direct call sites found for either, confirming both
+are invoked purely through Delphi virtual dispatch. Static disassembly
+is at a hard wall here without better tooling.
+
+Switching to isolating the variable empirically: next test sends only a
+bare ENDCOUNTRYLIST\r\n (no COUNTRY/ARENA lines) to determine whether
+the error comes from the per-item line format or something more basic.
