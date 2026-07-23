@@ -72,7 +72,11 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
                                  "server rather than being fixed. Treat delimiter as UNKNOWN "
                                  "until confirmed."),
     "CHATREQ":        TokenInfo("CHATREQ", "arena.exe", CONFIRMED_DISASSEMBLY),
-    "CLAUTH":         TokenInfo("CLAUTH", "arena.exe", CONFIRMED_DISASSEMBLY),
+    "CLAUTH":         TokenInfo("CLAUTH", "both", CONFIRMED_RUNTIME,
+                                 "Not an arena.exe-only admin verb as originally assumed - this is "
+                                 "the envelope wrapping every outbound command from both binaries: "
+                                 "'CLAUTH <username> <password> <COMMAND> <version>\\r\\n'. "
+                                 "See docs/protocol.md section 3 and captures/2026-07-23_first_real_capture.txt."),
     "FIGHTREQ":       TokenInfo("FIGHTREQ", "arena.exe", CONFIRMED_DISASSEMBLY),
     "GRANTOP":        TokenInfo("GRANTOP", "arena.exe", CONFIRMED_DISASSEMBLY),
     "KICKUSER":       TokenInfo("KICKUSER", "arena.exe", CONFIRMED_DISASSEMBLY),
@@ -80,18 +84,49 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
     "SETBANLIST":     TokenInfo("SETBANLIST", "arena.exe", CONFIRMED_DISASSEMBLY),
     "SETMAXNUM":      TokenInfo("SETMAXNUM", "arena.exe", CONFIRMED_DISASSEMBLY),
     "SETWELCOMEMSG":  TokenInfo("SETWELCOMEMSG", "arena.exe", CONFIRMED_DISASSEMBLY),
+    "MCC":            TokenInfo("MCC", "arena.exe", CONFIRMED_RUNTIME,
+                                 "arena.exe's registration command with the meta server, sent as the "
+                                 "<COMMAND> field of a CLAUTH envelope: 'CLAUTH <arena name> "
+                                 "<arena password> MCC <version>\\r\\n'. Matches the GMCC component "
+                                 "name found via disassembly. Response format still UNKNOWN."),
 }
+
+
+def parse_clauth_envelope(raw: bytes) -> Optional[dict]:
+    """
+    CONFIRMED (runtime, 2026-07-23): every outbound command from both
+    gitr2k.exe and arena.exe is wrapped as
+        CLAUTH <username> <password> <COMMAND> <version>\\r\\n
+    space-delimited, CRLF-terminated. See docs/protocol.md section 3 and
+    captures/2026-07-23_first_real_capture.txt.
+
+    Returns None if `raw` doesn't match this envelope shape at all. Field
+    splitting is a plain single-space split, which is known to be wrong if
+    username/password ever contain spaces - no evidence either way yet,
+    so this is a reasonable first pass, not a confirmed parser.
+    """
+    try:
+        text = raw.decode("ascii", errors="strict")
+    except UnicodeDecodeError:
+        return None
+    line = text.split("\r\n", 1)[0].split("\n", 1)[0]
+    parts = line.split(" ")
+    if len(parts) < 5 or parts[0].upper() != "CLAUTH":
+        return None
+    username, password, command, version = parts[1], parts[2], parts[3], " ".join(parts[4:])
+    return {"username": username, "password": password, "command": command.upper(), "version": version}
 
 
 @dataclass
 class Dispatcher:
     """
-    Maps a recognized leading token to a handler callable. Handlers live in
+    Maps a recognized command token to a handler callable. Handlers live in
     commands/*.py. A handler receives (raw_line: bytes, client_info: dict,
-    context: dict) and MAY return bytes to send back - but every handler in
-    this project currently returns None unless a response has been
-    CONFIRMED (runtime), per the project's compatibility-first rule:
-    "do not invent packets."
+    context: dict) and MAY return bytes to send back - every handler in
+    this project returns None unless a response has been CONFIRMED
+    (runtime) or is an explicitly-labeled, disclosed experiment being
+    tested against the real client, per the project's compatibility-first
+    rule: "do not invent packets [without saying so]."
     """
     handlers: Dict[str, Callable] = field(default_factory=dict)
 
@@ -102,9 +137,8 @@ class Dispatcher:
         """
         Best-effort, NON-authoritative: looks for any known token appearing
         at the start of the data (after stripping leading whitespace/CR/LF),
-        up to the first space or line ending. This is for categorizing/
-        logging purposes only - it does not assume this is how the real
-        client frames messages, since framing itself is still UNKNOWN.
+        up to the first space or line ending. Fallback path only, used when
+        `raw` isn't a CLAUTH envelope - see dispatch() below.
         """
         stripped = raw.lstrip(b" \t\r\n")
         if not stripped:
@@ -128,7 +162,12 @@ class Dispatcher:
         return None
 
     def dispatch(self, raw: bytes, client_info: dict, context: dict):
-        token = self.find_candidate_token(raw)
+        envelope = parse_clauth_envelope(raw)
+        if envelope is not None:
+            token = envelope["command"]
+            client_info = {**client_info, **envelope}
+        else:
+            token = self.find_candidate_token(raw)
         if token and token in self.handlers:
             return self.handlers[token](raw, client_info, context)
         return None
