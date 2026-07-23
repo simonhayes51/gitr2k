@@ -495,3 +495,48 @@ single function traced so far in this project, e.g. MCC's OWNER ack or
 RETRCOUNTRIES's format). This is a natural pause point for REQMOVES,
 similar to where RETRARENALIST stalled - worth a decision on whether to
 invest further static-analysis effort here before the next live test.
+
+--- Static analysis (no live test this round): VMT reconstruction reveals REQMOVES is a chained multi-stage sequence ---
+Per operator direction ("dig deeper via disassembly" rather than guess
+more or switch fronts), went back into arena.exe to find out what the
+unexamined VMT+0x9c virtual call in TMovesDBCommand's handler actually
+does, instead of leaving it as an unknown "generic parser".
+
+Method: found the compiled Pascal shortstring "TMovesDBCommand" (length-
+prefixed, 15 chars) at file offset 0x60d50 (VA 0x461950 for the length
+byte). Raw-scanned the whole binary for that VA appearing as a literal
+4-byte pointer - found exactly one occurrence, at VA 0x461910. Brute-
+forced the actual VMT base by testing every plausible negative offset
+from that address, checking which one made ALL FOUR of the offsets
+TMovesDBCommand's method actually calls (+0x74, +0x84, +0x9c, +0xC4)
+resolve to addresses inside the CODE section. Exactly one candidate fit:
+VMT base = 0x461938 (vmtClassName at offset -40/-0x28 for this Delphi
+build). This gives VMT+0x9c = 0x461a20.
+
+Disassembled 0x461a20 expecting a data parser - it is NOT one. It's
+another near-identical command handler: sends "REQACTIONS" (10 chars),
+reads one line, takes Copy(line,1,9), and rejects an EXACT MATCH to the
+literal "ACTIONSDB" (9 chars) via the same "invalid response" error -
+then chains onward again via its own Self+0xC4/VMT+0x9c call, the exact
+same shape as TMovesDBCommand.
+
+CONCLUSION: REQMOVES/MOVESDB is not an isolated request/response - it's
+the first stage of a chained sequence of startup database-sync commands
+(at minimum Moves -> Actions -> ..., very plausibly continuing further
+given the previously-found SWEARDB/REQSWLIST sibling and other
+scripting-adjacent keywords SCRIPT/PLUGIN found earlier in this project).
+The rejection rule generalizes cleanly across the family: for any stage,
+the response's first N characters (N = length of that stage's own
+"<NAME>DB"-style literal) must NOT exactly equal that literal, or
+arena.exe raises "invalid response" - consistent with what we already
+saw happen live when we sent bare "MOVESDB\r\n".
+
+STILL UNKNOWN: what content DOES satisfy the "not rejected" branch.
+Tracing that further would mean identifying the class of the object at
+Self+0xC4 (passed into the chained VMT+0x9c call alongside the received
+line) and disassembling ITS methods - a comparably-sized reconstruction
+task to the VMT-recovery work just completed, not yet attempted.
+
+No live test this round - static analysis only, correctly labeled as
+such. No change to what the server sends (still no response to
+REQMOVES, per the previous session's revert).
