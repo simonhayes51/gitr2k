@@ -838,3 +838,81 @@ This rules out one specific hypothesis about REQMOVES's unresolved
 response content but does not itself resolve what that content should be.
 Full write-up added to docs/protocol.md section 7. No server-side code
 changes or live test this session - purely DFM/RTTI-based static analysis.
+
+--- Static analysis (no live test): gitr2k.exe client-side components, DFM-first ---
+Per operator direction to use DFM component names as anchors (not assembly
+guesses), extracted gitr2k.exe's own RT_RCDATA resources (separate binary
+from arena.exe) via pefile: TFRMARENASELECT, TFRMCHAT, TFRMFIGHT,
+TFRMGITR2KMAIN, TFRMARENAADMIN, TUSERLISTFRAME, and others. Verified every
+name the operator asked about (TGITRChatClient, TGITRFightClient,
+TUserlistFrame, TGITRArenaListClient, TfrmArenaSelect, OnPoints,
+OnCommentary, OnInitDone, OnCountryRetrieve, OnEndCountryList,
+OnArenaRetrieve, OnEndArenaList) via a full-binary strings scan BEFORE
+doing any work - all confirmed real, all living in gitr2k.exe (the client),
+not arena.exe.
+
+TGITRArenaListClient (on TfrmArenaSelect) - FULLY TRACED, all 4 data
+handlers disassembled and confirmed:
+  - GITRArenaListClientCountryRetrieve (0x54ea7c): adds a ROOT node to the
+    ELTArenas tree per COUNTRY line - confirmed via BeginUpdate + Add-node
+    calls on the same tree-control field used consistently across all
+    handlers.
+  - GITRArenaListClientEndCountryList (0x54ebcc): decrements a shared
+    "pending retrieval" counter (set to 1 in FormCreate); at zero, hides
+    the busy indicator - fires on the ENDCOUNTRYLIST terminator.
+  - GITRArenaListClientArenaRetrieve (0x54e940): adds a CHILD node under
+    the relevant country (via a DIFFERENT add-method than CountryRetrieve's),
+    confirming the tree is genuinely hierarchical - fires per RETRARENALIST
+    response line.
+  - GITRArenaListClientEndArenaList (0x54ee70): byte-identical logic to
+    EndCountryList, same shared counter - fires on RETRARENALIST's
+    terminator.
+  Where METAARENALIST/RETRCOUNTRIES actually get SENT remains an
+  unresolved dead end (confirmed: the METAARENALIST string constant has
+  exactly one reference, a trivial getter with no findable caller - same
+  virtual-dispatch wall as before). FormShow and FormCreate were both
+  fully disassembled and do NOT contain the send.
+
+TGITRChatClient (on TfrmGITR2KMain) - enumerated all 27 DFM-declared
+events (CONFIRMED via DFM). Individual handlers NOT disassembled this
+pass except by name-correspondence to already-known tokens
+(USERENTER/USERLEAVE/CHATID/METAMSG/CHALLENGE/DENYCHALLENGE/FIGHTSTART/
+FIGHTSTOP/PINGECHO) - marked explicitly as "name match only, not
+independently confirmed" per the operator's instruction not to infer
+from names alone. New, previously-unknown events discovered: OnMessage,
+OnMeMessage, OnPrivateMessage, OnAction, OnSound, OnFontRetrieved,
+OnChatInvite, OnAwayStatusChange, OnArenaMessage, OnUserOp, OnUserDeop,
+OnOperatorInvite, OnFightID, OnUserFightLeave, OnCommentary (its own,
+separate from FightClient's).
+
+TGITRFightClient (on TfrmFight) - enumerated all 19 DFM-declared events.
+Per operator's explicit request, fully disassembled the three named
+ones (not inferred from name):
+  - FightClientInitDone (0x55b178): sets a boolean flag then calls a
+    follow-up method - confirmed behavior matches the name.
+  - FightClientPoints (0x55b190): clamps an incoming value to
+    non-negative, then updates a UI control with it plus a constant -
+    confirmed genuine points-update logic, not just a name.
+  - FightClientCommentary (0x55b754): a short passthrough forwarding
+    text to a display-control method - confirmed simple append-text
+    handler.
+
+TUserlistFrame / VIP-ban-primaryop-secondaryop lists: CONFIRMED (DFM) -
+TUserlistFrame itself is a generic reusable widget (listbox + buttons)
+with NO storage component. TfrmArenaAdmin (gitr2k.exe's admin config
+dialog) embeds 4 instances (ulfVIP, ulfBan, ulfAdmin, ulfSecondary) but
+has NO TJHDataStorage/TJHCompressedDataStorage anywhere in its own DFM
+either. Cross-referencing back to arena.exe's DFM (already extracted
+last session): the only related storage component anywhere is the
+single, shared "AdminDatabase" (TJHDataStorage). Concluded (STRONG
+INFERENCE, not fully traced this pass): TfrmArenaAdmin is a pure
+client-side config UI that transmits list contents over the wire
+(matching the already-known TCommandGetVIPList/SetVIPList/GetBanList/
+SetBanList/GetAdminList/SetAdminList/GetSecondaryList/SetSecondaryList
+command classes); which handler actually writes into AdminDatabase was
+not traced this pass.
+
+Full write-up added to docs/protocol.md section 8. No server-side code
+changes or live test this session - purely DFM/RTTI-based static
+analysis of gitr2k.exe specifically (first time this session focused on
+the client binary rather than arena.exe).

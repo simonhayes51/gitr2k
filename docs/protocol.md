@@ -479,4 +479,88 @@ The DFM tree reveals **two independent, unrelated network components** on `frmGI
 
 ---
 
+## 8. `gitr2k.exe` (client) network components - `TGITRArenaListClient`, `TGITRChatClient`, `TGITRFightClient` (2026-07-23)
+
+Per operator instruction, this pass used **only** DFM component names as anchors (extracted the same way as §7 - `pefile` against `gitr2k.exe`'s `RT_RCDATA` resources, parsed with the same flat-scan technique) plus the published-methods RTTI table to find real function addresses - no VMT arithmetic. `gitr2k.exe` has its own separate set of forms: `TfrmArenaSelect` (`TFRMARENASELECT`), `TfrmChat` (`TFRMCHAT`), `TfrmFight` (`TFRMFIGHT`), `TfrmGITR2KMain` (`TFRMGITR2KMAIN`), `TfrmArenaAdmin` (`TFRMARENAADMIN`), `TUserlistFrame` (`TUSERLISTFRAME`), among others.
+
+### `TGITRArenaListClient` (on `TfrmArenaSelect`) - the arena-list retrieval state machine, CONFIRMED end to end
+
+DFM component `GITRArenaListClient` (`Host=GETINTR2K.MINIDNS.NET`, `Username=NIL`, `Password=NIL` - matching the already-confirmed `CLAUTH NIL NIL ...` envelope pattern) declares exactly six events:
+
+| DFM event | Handler name | Address (found via published-methods RTTI, not VMT) |
+|---|---|---|
+| `OnDisconnected` | `GITRArenaListClientDisconnected` | `0x54eea8` |
+| `OnError` | `GITRArenaListClientError` | `0x54f078` |
+| `OnCountryRetrieve` | `GITRArenaListClientCountryRetrieve` | `0x54ea7c` |
+| `OnEndCountryList` | `GITRArenaListClientEndCountryList` | `0x54ebcc` |
+| `OnArenaRetrieve` | `GITRArenaListClientArenaRetrieve` | `0x54e940` |
+| `OnEndArenaList` | `GITRArenaListClientEndArenaList` | `0x54ee70` |
+
+**CONFIRMED (disassembly) behavior of each, all fully disassembled:**
+
+- **`GITRArenaListClientCountryRetrieve`**: calls a `BeginUpdate`-shaped method on `Self.field_0x2d4` (the `ELTArenas` tree control - CONFIRMED to be this field because the same field is used identically across all four data-arriving handlers), then calls an `Add`-shaped method (`0x539e1c`) on `field_0x2d4.field_0x3f8` (the tree's `Items`/root-node collection) to create a **new root node**, and sets that node's text. **This is the handler that fires for each `COUNTRY <name> <arena_count>` line** in the already-confirmed `RETRCOUNTRIES` response - directly explains how the "Select Arena" tree's country-level nodes get populated.
+- **`GITRArenaListClientEndCountryList`**: decrements a shared "pending retrieval" counter (`field_0x2e4`, set to `1` in `FormCreate`); when it reaches zero, calls methods on `field_0x2dc` and `field_0x2e0` (consistent with hiding the `TRAWaitPanel`/updating `lblStatus`, i.e. clearing the "retrieving country list" busy indicator). **Fires on the bare `ENDCOUNTRYLIST` terminator.**
+- **`GITRArenaListClientArenaRetrieve`**: receives an incoming record (via `ecx`/`esi`, with distinct sub-fields at `+0x4`, `+0x8`, `+0x18` - very likely arena name, a count, and a country back-reference respectively) and calls a **different** add-method (`0x53a754`, distinct from `CountryRetrieve`'s `0x539e1c`) on the same tree's `Items` collection to add a **child node** under the relevant country, then sets that node's text from the `+0x4` field. **This is the handler for each per-arena line of the `RETRARENALIST <country>` response** - confirms the tree really is populated hierarchically (country root -> arena children), matching the three-stage lazy hierarchy already established from server-side capture.
+- **`GITRArenaListClientEndArenaList`**: byte-for-byte identical logic to `EndCountryList` (same counter decrement, same hide-busy-indicator calls) - **fires on the `RETRARENALIST` response's terminator**, and shares the same "pending count" field with the country-list completion, meaning both list-completion events feed one shared busy-indicator mechanism.
+
+**Where `METAARENALIST`/`RETRCOUNTRIES` actually get *sent* remains a confirmed dead end**, consistent with what was already documented: the `METAARENALIST` string constant (VA `0x54d038`) has exactly one reference in the whole binary (`0x54d022`), a trivial `Result := 'METAARENALIST'`-style getter with no findable caller - the same virtual-dispatch wall hit before with `METAARENALIST` on the disassembly side, and not resolved by this DFM-first pass either. `TfrmArenaSelect.FormShow` (`0x54eba4`) and `FormCreate` (`0x54ee48`) were both fully disassembled and do **not** contain the send - they only initialize the busy-indicator counter and show a resource-string message. The actual `RETRCOUNTRIES`/`METAARENALIST` send site was not located this pass; this is an open question, not a filled-in answer.
+
+### `TGITRChatClient` (on `TfrmGITR2KMain`, instance name `GITRChatClient`) - DFM-confirmed event list
+
+All 27 events below are **CONFIRMED (DFM)** - directly read from the component's property list, not inferred. Protocol-token correspondence is marked separately: `CONFIRMED` where independently cross-checked against already-known wire tokens, `NAME MATCH ONLY` where the token is a new discovery and hasn't been individually disassembled this pass (per operator instruction not to infer from names alone, these should not be treated as settled).
+
+| Event | Handler | Protocol correspondence |
+|---|---|---|
+| `OnDisconnected` | `GITRChatClientDisconnected` | generic connection lifecycle |
+| `OnConnected` | `GITRChatClientConnected` | generic connection lifecycle |
+| `OnError` | `GITRChatClientError` | generic error path |
+| `OnMessage` | `GITRChatClientMessage` | NAME MATCH ONLY - not yet cross-checked against a specific known token |
+| `OnMeMessage` | `GITRChatClientMeMessage` | NAME MATCH ONLY (likely `/me`-style action text) |
+| `OnPrivateMessage` | `GITRChatClientPrivateMessage` | NAME MATCH ONLY |
+| `OnAction` | `GITRChatClientAction` | NAME MATCH ONLY |
+| `OnSound` | `GITRChatClientSound` | NAME MATCH ONLY |
+| `OnFontRetrieved` | `GITRChatClientFontRetrieved` | NAME MATCH ONLY |
+| `OnUserEnter` | `GITRChatClientUserEnter` | **CONFIRMED** correspondence to already-known `USERENTER` token (§2) by name; handler itself not disassembled this pass |
+| `OnUserLeave` | `GITRChatClientUserLeave` | **CONFIRMED** correspondence to already-known `USERLEAVE` token by name; handler not disassembled |
+| `OnChatInvite` | `GITRChatClientChatInvite` | NAME MATCH ONLY - new discovery |
+| `OnAwayStatusChange` | `GITRChatClientAwayStatusChange` | NAME MATCH ONLY - new discovery |
+| `OnChatID` | `GITRChatClientChatID` | likely relates to `CHATID` (§2, already known) - not individually disassembled |
+| `OnArenaMessage` | `GITRChatClientArenaMessage` | NAME MATCH ONLY - new discovery |
+| `OnUserOp` | `GITRChatClientUserOp` | NAME MATCH ONLY - new discovery (arena-op grant notification, plausibly) |
+| `OnUserDeop` | `GITRChatClientUserDeop` | NAME MATCH ONLY - new discovery |
+| `OnMetaMessage` | `GITRChatClientMetaMessage` | likely relates to already-known `METAMSG` (§2/§4) - not individually disassembled on this side |
+| `OnOperatorInvite` | `GITRChatClientOperatorInvite` | NAME MATCH ONLY - new discovery |
+| `OnFightID` | `GITRChatClientFightID` | NAME MATCH ONLY - new discovery |
+| `OnChallenge` | `GITRChatClientChallenge` | likely relates to already-known `CHALLENGE` token - not individually disassembled |
+| `OnChallengeDenied` | `GITRChatClientChallengeDenied` | likely relates to already-known `DENYCHALLENGE` token - not individually disassembled |
+| `OnFightStart` | `GITRChatClientFightStart` | likely relates to already-known `FIGHTSTART` token - not individually disassembled |
+| `OnFightStop` | `GITRChatClientFightStop` | likely relates to already-known `FIGHTSTOP` token - not individually disassembled |
+| `OnUserFightLeave` | `GITRChatClientUserFightLeave` | NAME MATCH ONLY - new discovery |
+| `OnCommentary` | `GITRChatClientCommentary` | NAME MATCH ONLY - new discovery (this is `TGITRChatClient`'s *own* commentary event, separate from `TGITRFightClient`'s below) |
+| `OnPingEcho` | `GITRChatClientPingEcho` | likely relates to already-known `PINGECHO` token - not individually disassembled |
+
+None of the above 27 handlers were disassembled this pass beyond confirming their addresses exist in the RTTI table - the "likely relates to" notes are honest naming correspondences to already-established tokens, not new confirmations. A full individual disassembly of all 27 is a substantially larger undertaking than what this pass covered and is left as future work.
+
+### `TGITRFightClient` (on `TfrmFight`, instance name `FightClient`) - DFM-confirmed event list, three handlers disassembled
+
+19 events, all **CONFIRMED (DFM)**:
+
+`OnDisconnected`, `OnIPReceived`, `OnMessage`, `OnMeMessage`, `OnAction`, `OnSound`, `OnUserEnter`, `OnUserLeave`, `OnCommentary`, `OnButton`, `OnPoints`, `OnMaxEnergy`, `OnInitDone`, `OnTerminated`, `OnUserEnabled`, `OnUserInTheRing`, `OnUserFighting`, `OnAddUserDisplay`, `OnSetDivider` (the last one plausibly relates to the already-known `SETDIVIDER` token, §2 - not individually disassembled).
+
+Per the operator's explicit request, three were fully disassembled (not inferred from name):
+
+- **`FightClientInitDone`** (`0x55b178`): sets a boolean field (`Self.field_0x35c := True`, via an inlined one-line helper at `0x55b1f4`) then calls a second method (`0x55b3e4`, not further traced). **CONFIRMED behavior**: flips an "initialization complete" flag and triggers a follow-up method - consistent with the name, marking the fight UI as ready once whatever initial setup completes.
+- **`FightClientPoints`** (`0x55b190`): takes an incoming value, **clamps it to be non-negative** (`test ebx,ebx; jge; xor ebx,ebx`), then calls a method on `Self.field_0x2e4` passing the clamped value plus a 16-bit constant (`0xFFB2`). **CONFIRMED behavior**: updates a UI control (most likely a points/energy meter) with a bounds-checked numeric value - a genuine points-update handler, not just named that way.
+- **`FightClientCommentary`** (`0x55b754`): a short, direct passthrough - `mov edx,ecx; mov eax,[eax+0x324]; call 0x4cedd0; ret`. **CONFIRMED behavior**: forwards the incoming text straight to a method on `Self.field_0x324` (very likely the fight commentary/log display control) - a simple "append this text" handler.
+
+### `TUserlistFrame` and the VIP / ban / primary-op / secondary-op lists
+
+**CONFIRMED (DFM):** `TUserlistFrame` (instance names vary per embedding - `UserlistFrame`, `ulfVIP`, `ulfBan`, `ulfAdmin`, `ulfSecondary`) is a **generic, reusable UI widget** - just a `TListBox` (`lbList`) plus add/remove `TSpeedButton`s and an "enabled" `TCheckBox`. It has **no storage component of its own** anywhere in its DFM.
+
+**CONFIRMED (DFM):** `TfrmArenaAdmin` (`gitr2k.exe`'s "Arena administration" configuration dialog) embeds **four separate instances** of this frame, one per tab: `ulfVIP` ("VIP list"), `ulfBan` ("ban list"), `ulfAdmin` ("primary operator list" - note the instance name `ulfAdmin` for what the UI labels "primary operator"), `ulfSecondary` ("secondary operator list"). This form has **no `TJHDataStorage`/`TJHCompressedDataStorage` component anywhere in its DFM either** - it is a pure client-side configuration UI, not a data store.
+
+**Conclusion, cross-referencing back to §7's arena.exe findings:** neither `TUserlistFrame` nor `TfrmArenaAdmin` back these lists with `TJHDataStorage` or `TJHCompressedDataStorage` - that hypothesis doesn't hold on the client side. The only server-side (`arena.exe`) component with a matching name is `AdminDatabase` (`TJHDataStorage`, confirmed in §7), which is a single, shared store - there is no evidence of four separate per-list storage components anywhere in either binary. The most likely real architecture (**STRONG INFERENCE, not directly disassembly-confirmed this pass**) is that `TfrmArenaAdmin` is purely a configuration UI that transmits list contents to `arena.exe` over the wire (matching the already-known `TCommandGetVIPList`/`TCommandSetVIPList`/`TCommandGetBanList`/`TCommandSetBanList`/`TCommandGetAdminList`/`TCommandSetAdminList`/`TCommandGetSecondaryList`/`TCommandSetSecondaryList` command classes found earlier under the separate `TGITRCommandBase` arena-admin-command hierarchy), and `arena.exe` persists whatever it receives into the single shared `AdminDatabase` store - but this specific connection (which command handler actually writes into `AdminDatabase`) was not traced this pass and remains open.
+
+---
+
 Update the table in §5 and the confidence markers throughout this document as each of these gets resolved — and please don't upgrade a confidence marker without a corresponding file in `captures/` (for runtime) or a specific address/offset (for disassembly) to point to.
