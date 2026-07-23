@@ -36,7 +36,7 @@ except ImportError:  # running as a plain script, not a package
 
 # Import command handlers
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__import__("os").path.abspath(__file__))))
-from commands import getnews, metaarenalist, sendchat, challenge, userenter, ping, mcc
+from commands import getnews, metaarenalist, sendchat, challenge, userenter, ping, mcc, retrcountries
 
 
 def build_dispatcher() -> protocol.Dispatcher:
@@ -44,6 +44,7 @@ def build_dispatcher() -> protocol.Dispatcher:
     d.register("GETNEWS", getnews.handle)
     d.register("GITRNEWS", getnews.handle)
     d.register("METAARENALIST", metaarenalist.handle)
+    d.register("RETRCOUNTRIES", retrcountries.handle)
     d.register("SENDCHAT", sendchat.handle)
     d.register("CHALLENGE", challenge.handle)
     d.register("USERENTER", userenter.handle)

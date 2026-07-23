@@ -89,6 +89,21 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
                                  "<COMMAND> field of a CLAUTH envelope: 'CLAUTH <arena name> "
                                  "<arena password> MCC <version>\\r\\n'. Matches the GMCC component "
                                  "name found via disassembly. Response format still UNKNOWN."),
+    "RETRCOUNTRIES":  TokenInfo("RETRCOUNTRIES", "gitr2k.exe", CONFIRMED_RUNTIME,
+                                 "Sent bare (no CLAUTH envelope) immediately after a METAARENALIST "
+                                 "response, on the same connection - this is what the 'Select Arena' "
+                                 "dialog's 'retrieving country list' status is actually waiting on. "
+                                 "See docs/protocol.md section 3."),
+    "COUNTRY":        TokenInfo("COUNTRY", "gitr2k.exe", CONFIRMED_DISASSEMBLY,
+                                 "Found in the same string-constant table as METAARENALIST/"
+                                 "ENDARENALIST while investigating RETRCOUNTRIES. Assumed per-country "
+                                 "line prefix in the (experimental, unconfirmed) RETRCOUNTRIES response."),
+    "ARENA":          TokenInfo("ARENA", "gitr2k.exe", CONFIRMED_DISASSEMBLY,
+                                 "Found alongside COUNTRY/ENDCOUNTRYLIST. Assumed per-arena line prefix "
+                                 "in the (experimental, unconfirmed) RETRCOUNTRIES response."),
+    "ENDCOUNTRYLIST": TokenInfo("ENDCOUNTRYLIST", "gitr2k.exe", CONFIRMED_DISASSEMBLY,
+                                 "Assumed terminator for the (experimental, unconfirmed) "
+                                 "RETRCOUNTRIES response."),
 }
 
 

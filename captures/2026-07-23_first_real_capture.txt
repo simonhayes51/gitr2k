@@ -30,3 +30,24 @@ log viewer.
   Source: gitr2k.exe, sent when the "Select Arena" dialog opened (shows
           "retrieving country list" - this request never got a response,
           so the dialog just spins forever)
+
+--- Second test session, after fixing the CLAUTH dispatch bug ---
+Server now recognizes and responds to commands. arena.exe registered
+"Test" via MCC as before (no response, as designed). gitr2k.exe's
+sequence on ONE connection:
+
+  > CLAUTH  NIL METAARENALIST 0\r\n
+  < METAARENALIST Test 0 20\r\nENDARENALIST\r\n   (our experimental guess)
+  > RETRCOUNTRIES\r\n   (bare, no CLAUTH envelope - sent on the same
+                         already-open connection as the line above)
+  < (no response sent yet at the time of this capture)
+  (connection then timed out and disconnected ~10s later)
+
+RETRCOUNTRIES is a brand new token, not previously known. Investigating
+it led to finding COUNTRY, ARENA, and ENDCOUNTRYLIST as compiled string
+constants in gitr2k.exe (same data table as METAARENALIST/ENDARENALIST),
+which we didn't know to look for before this. See docs/protocol.md
+section 3 and commands/retrcountries.py for the follow-up experimental
+response now deployed (COUNTRY/ARENA/ENDCOUNTRYLIST shape), which is
+untested as of this file being written - awaiting the next real client
+reaction.
