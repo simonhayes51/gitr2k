@@ -87,11 +87,26 @@ could actually connect to; arena_port is a hardcoded placeholder,
 right, the *values* will need fixing later. This test is purely about
 whether the field count/shape is accepted at all.
 
-Known risks: if this also errors, the ARENA line's expected shape may be
-something else entirely (a completely different field, or key=value
-style pairs, or something not resembling COUNTRY's pattern at all) - at
-that point it may be worth reconsidering whether ARENA truly is the
-right per-item token for this response.
+EXPERIMENT #5 RESULT (2026-07-23): "ARENA Test 100.64.0.2 7072\r\n" also
+produced "an error has occured.". Four variants down (name-only, +1,
++2, +host+port) - none work. This is no longer converging as a
+field-count problem at all.
+
+EXPERIMENT #6 (now live): new hypothesis - RETRARENALIST's response is a
+flat list, not nested under a COUNTRY line the way our RETRCOUNTRIES
+guess nested ARENA under COUNTRY conceptually. Maybe each ARENA line
+needs to restate which country it belongs to, the same way COUNTRY
+needed its own count field:
+
+    ARENA <country> <name> <player_count> <max_players>\r\n
+    ENDARENALIST\r\n
+
+Known risks: if this also fails, it's worth stepping back from guessing
+field combinations entirely and going back to static analysis - e.g.
+checking whether there's a distinct property-name string (like "Status"
+"Full" "Open") near ARENA in the binary we haven't looked for yet, since
+five straight rejected guesses suggests we may be missing something
+qualitatively different, not just a missing/reordered field.
 """
 
 
@@ -114,13 +129,17 @@ def handle(raw: bytes, client_info: dict, context: dict):
         port=client_info["port"],
         note=(
             f"RETRARENALIST request for country={country!r}. Sending "
-            f"EXPERIMENT #5: ARENA <name> <host_ip> <port> (pivoting to "
-            f"the host/port hypothesis after 3 field-count variants all "
-            f"failed), plus ENDARENALIST ({len(arenas)} arena(s) "
-            f"registered - see docstring in commands/retrarenalist.py)."
+            f"EXPERIMENT #6: ARENA <country> <name> <player_count> "
+            f"<max_players> (restating the country per-arena, new "
+            f"hypothesis after 4 straight rejections), plus ENDARENALIST "
+            f"({len(arenas)} arena(s) registered - see docstring in "
+            f"commands/retrarenalist.py)."
         ),
     )
 
-    lines = [f"ARENA {arena['name']} {arena['host_ip']} {arena['arena_port']}\r\n" for arena in arenas]
+    lines = []
+    for arena in arenas:
+        max_players = arena["max_players"] if arena["max_players"] is not None else 20
+        lines.append(f"ARENA {country} {arena['name']} {arena['player_count']} {max_players}\r\n")
     lines.append("ENDARENALIST\r\n")
     return "".join(lines).encode("ascii", errors="replace")

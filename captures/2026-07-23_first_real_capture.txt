@@ -184,3 +184,16 @@ testing whether it needs host/port info:
     ARENA <name> <host_ip> <port>\r\n
 (host_ip/port values are placeholders/internal addresses for now - this
 tests whether the shape is accepted at all, not real connectivity.)
+
+--- Eleventh test session: RETRARENALIST experiment #5 rejected ---
+Sent: ARENA Test 100.64.0.2 7072\r\nENDARENALIST\r\n (name+host+port)
+Client reaction: "an error has occured." again.
+
+Four variants down (name-only, +1 field, +2 fields, +host+port) - none
+work. No longer converging as a field-count problem.
+
+Experiment #6 (next): new hypothesis - restate the country per ARENA
+line, since RETRARENALIST's response is a flat list, not nested:
+    ARENA <country> <name> <player_count> <max_players>\r\n
+If this also fails, worth returning to static analysis rather than
+continuing to guess field combinations blindly.
