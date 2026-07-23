@@ -38,20 +38,15 @@ produced "an error has occured." - same as experiment #2. Combined with
 experiment #3 (empty list works), this narrows the fault precisely to
 the COUNTRY line's own format, not anything ARENA-specific.
 
-EXPERIMENT #5 (now live): COUNTRY with no other fields is what breaks;
-ARENA lines carry trailing numeric fields (players/max), so guessing
-COUNTRY is missing a trailing count field of its own (e.g. how many
-arenas follow, letting the client pre-size something before reading
-them) - a missing integer field is a classic cause of this kind of
-generic index/parse error.
+EXPERIMENT #5 RESULT: CONFIRMED WORKING (2026-07-23). Adding a trailing
+arena-count field fixed it - "COUNTRY International 1\r\nENDCOUNTRYLIST\r\n"
+populated the "Select Arena" tree cleanly with an "International" node
+showing count 1, no error. This is the first fully confirmed-by-reaction
+response format in this project (see docs/protocol.md section 5).
 
-    COUNTRY <name> <arena_count>\r\n
-    ENDCOUNTRYLIST\r\n
-
-Known risks with this guess: still just a guess at which field is
-missing and where; if this also errors, the next round should try
-other candidate fields (a country code/ID instead of/alongside the
-name, a different field order, etc).
+The client then automatically sent a brand-new command we'd never seen,
+RETRARENALIST <country name>\r\n, requesting that country's actual arena
+details - see commands/retrarenalist.py for the follow-up handler.
 """
 
 PLACEHOLDER_COUNTRY = "International"

@@ -104,6 +104,17 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
     "ENDCOUNTRYLIST": TokenInfo("ENDCOUNTRYLIST", "gitr2k.exe", CONFIRMED_DISASSEMBLY,
                                  "Assumed terminator for the (experimental, unconfirmed) "
                                  "RETRCOUNTRIES response."),
+    "RETRARENALIST":  TokenInfo("RETRARENALIST", "gitr2k.exe", CONFIRMED_RUNTIME,
+                                 "Not previously known at all (not found via static analysis). "
+                                 "Sent bare, with a country name argument, immediately after a "
+                                 "successful RETRCOUNTRIES response: "
+                                 "'RETRARENALIST <country name>\\r\\n'. Confirms a three-stage "
+                                 "lazy hierarchy: METAARENALIST -> RETRCOUNTRIES -> "
+                                 "RETRARENALIST <country>. See docs/protocol.md section 3."),
+    "BOGUS":          TokenInfo("BOGUS", "gitr2k.exe", CONFIRMED_RUNTIME,
+                                 "Sent bare, ~38s after a RETRARENALIST request got no response. "
+                                 "Purpose UNKNOWN - possibly a keepalive/liveness probe after an "
+                                 "idle timeout, possibly something else. No handler yet."),
 }
 
 

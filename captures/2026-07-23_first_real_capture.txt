@@ -101,3 +101,34 @@ ARENA-specific, since ARENA lines weren't even present this round.
 Experiment #5 (next): add a trailing arena-count field to the COUNTRY
 line, guessing it needs one the way ARENA lines carry numeric fields:
     COUNTRY International <count>\r\n
+
+--- Sixth test session: experiment #5 CONFIRMED WORKING + new RETRARENALIST ---
+Sent: COUNTRY International 1\r\nENDCOUNTRYLIST\r\n (trailing arena-count
+field added to the COUNTRY line)
+
+Client reaction: SUCCESS. "Select Arena" tree populated cleanly with an
+"International" node showing count 1, status text changed to "retrieving
+arena list" (progressing normally, no error). This is the first fully
+CONFIRMED (runtime) response format in this project.
+
+The client then automatically sent a brand-new command, never seen or
+known about before at all (not even as a compiled string constant we'd
+noticed):
+
+  > RETRARENALIST International\r\n   (bare, no CLAUTH envelope)
+
+...then, ~38 seconds later, having received no response yet:
+
+  > BOGUS\r\n
+
+BOGUS's purpose is UNKNOWN - possibly a liveness/keepalive probe after
+an idle timeout waiting for RETRARENALIST's response, possibly something
+else entirely. No handler implemented for it yet.
+
+Added commands/retrarenalist.py with a guessed response reusing the
+already-confirmed ARENA and ENDARENALIST tokens:
+  ARENA <name> <player_count> <max_players>\r\n   (per arena)
+  ENDARENALIST\r\n
+Verified locally end-to-end (MCC -> METAARENALIST -> RETRCOUNTRIES ->
+RETRARENALIST, replaying the exact real-observed sequence). Awaiting the
+next real client reaction.
