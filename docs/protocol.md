@@ -563,4 +563,118 @@ Per the operator's explicit request, three were fully disassembled (not inferred
 
 ---
 
+## 9. Arena server startup sequence: `btnStartStopClick`, `FormCreate`, and the five "Database" components — deep dive (2026-07-23, second pass)
+
+Per operator instruction, this pass worked exclusively from disassembly of `arena_unpacked.exe`'s `frmGITRServer` methods, cross-checked against a byte-precise, gapless published-fields RTTI table re-derived this session. No VMT reconstruction or class-layout speculation was used.
+
+### 9.1 Correction to the §7 RTTI field table (extraction bug, not a factual error)
+
+The extraction pass that produced §7's field-offset table filtered candidate field names with a regex (`65<=b<=122 or b==95`) that silently **excludes ASCII digits (48–57)**, dropping real field names containing digits (`N1`, `mmishow1`, `mmiexit1`, and critically `lblLabel1`/`lblLabel2`) from the printed output, though they existed in the raw data. This did not invalidate any entry already reported in §7 (none contained digits), but it made the table look gappy. Fixed by re-deriving the entire table with a strict, gapless sequential walk from the known-good anchor `GITRServer` (file offset `0x9d804`), computing `entry_size = 1(namelen)+namelen+4(offset)+2(type_idx)` and stepping deterministically with zero skipped entries. Trusted, final table (`frmGITRServer`, gapless `0x2d4`→`0x350`):
+
+```
+GITRServer=0x2d4   GITRObjectBroker=0x2d8  lbLog=0x2dc         ChatDatabase=0x2e0
+edtWelcome=0x2e4   RxTrayIcon=0x2e8        pmTray=0x2ec         mmishow1=0x2f0
+N1=0x2f4           mmiexit1=0x2f8          IdAntiFreeze=0x2fc   lblLabel1=0x300
+TL=0x304           lblLabel2=0x308         bvlBevel1=0x30c      edtArenaName=0x310
+lblArenaName=0x314 lblArenaPass=0x318      edtArenaPass=0x31c   btnStartStop=0x320
+GMCC=0x324         RegAuto=0x328           AdminDatabase=0x32c  FSDRunOnce=0x330
+ActionDatabase=0x334 FightDatabase=0x338   sdb=0x33c            btnButton1=0x340
+btnButton2=0x344   SaveDialog=0x348        btnButton3=0x34c     btnButton4=0x350
+```
+
+No contradictions with §7's database-wiring claims were found — the one contradiction found this pass is in the *code*, not this table (see 9.4).
+
+### 9.2 `FormCreate` (VA `0x49e910`) — confirmed initialization sequence
+
+CONFIRMED (disassembly), in call order:
+
+1. **`AdminDatabase.Open`-style call** (`0x49e931` → `0x4731dc`). `0x4731dc` checks `[Self+0x2c]` for "already open" (raises via string-build + `0x40ca04` construct + `0x403704` raise if so), otherwise calls `[Self+0x24]`'s init via dispatch helper `0x404118`. This is the only explicit database-open call in `FormCreate` — **`AdminDatabase` is the only one of the five explicitly opened here.**
+2. **Four `GITRServer.RegisterClass`-style calls** (`0x45a6a8`: `eax=GITRServer`, `edx=class-reference`; calls `[classref+0x38]` virtually, then adds a name→class mapping via `[Self+0x3c]`'s `[ecx+0x34]` virtual call), called with `Self.GITRServer` (field `0x2d4`) and each of the same four class-reference globals used by `_IsClass` in `GITRObjectBrokerAfterCreateObject` (§7): `ds:0x499748`→`TGITRBaseChatObject`, `ds:0x473588`→`TGITROperatorObject`, `ds:0x473678`→`TGITRPrimaryOpObject`, `ds:0x495184`→`TGITRBaseFightObject`. Corroborates §7's dispatcher findings from the registration side.
+3. **`ChatDatabase` read + log** (`0x42c0cc` reads a string property off `Self.ChatDatabase`/`0x2e0`; result passed to `0x45b990` along with `Self.lbLog`/`0x2dc` and function-pointer constant `0x49e9f0`). This reads an already-available property and logs it — it does **not** open or populate `ChatDatabase`.
+4. **`SetMaxUsers`-shaped call** (`0x49fbf0`, `edx=0xf=15`) — cross-validates the confirmed wire capture `SETINFO 0 15`.
+5. A global registry/singleton (`0x4a5ed8`): `Self`→`[eax+0xf4]`, callback `0x49ed14`→`[eax+0xf0]`. Purpose not confirmed.
+
+**CONFIRMED: `ActionDatabase`, `FightDatabase`, and `sdb` are not touched anywhere in `FormCreate`** — no open/init call, no read, no reference of any kind to fields `0x334`, `0x338`, `0x33c`.
+
+### 9.3 `btnStartStopClick` (VA `0x49edfc`) — confirmed Start-button handler
+
+Found via published-methods RTTI (region `0x9d900`–`0x9dc00`), independently resolving which object's fields the log code below operates on:
+
+```
+btnStartStopClick (0x49edfc)
+  └─ checks boolean at [[Self.field_0x2d0]+0x64]
+       ├─ set:   calls 0x4a1934 (not disassembled this pass — "stop" path, by elimination)
+       └─ clear: calls 0x4a120c   ← the ONLY call site to 0x4a120c in the binary (CALL rel32 at 0x49ee10)
+```
+
+`0x4a120c` (true entry confirmed via its `push ebp; mov ebp,esp; add esp,0xfffffed0` prologue) references both log strings: `"connected"` (VA `0x4a17c4`, 9 bytes, referenced at `0x4a135d`) and `"retrieving moves database"` (VA `0x4a17d8`, 25 bytes, referenced at `0x4a13ad`), both passed to the log-append helper `0x462fa0` together with `Self.field_0x300` as the append target. **This is the function that emits both log lines the operator observed.**
+
+### 9.4 Unresolved contradiction — stopping point, per operator instruction
+
+`0x462fa0` is CONFIRMED (by its own disassembly) to be a `TStrings.Add`-style array-growing append helper: calls a `BeginUpdate`-shaped virtual method via `[Target+0x30]` (VMT+0 dispatch), grows a string array at `[Target+0x34]` (`lea eax,[eax+ebx*4]`), assigns via string-helper `0x403d28`. This requires `Target` to have a `TStrings`-compatible layout at `+0x30`/`+0x34` — **not a plain `TLabel`.**
+
+The trusted RTTI table (9.1) gives `field_0x300 = lblLabel1`, and the DFM confirms `lblLabel1` is a **`TLabel`** (`Caption = "arena activity log:"`), which has no `TStrings`-shaped Items collection at those offsets. This is a structural contradiction, not resolved this pass.
+
+**I am stopping here rather than guessing**, per instruction. The precise missing step needed to resolve it: **a full instruction-by-instruction re-disassembly of `0x4a120c` from entry to both calls into `0x462fa0`, confirming exactly which register/field is passed as `0x462fa0`'s target argument versus which is passed as the string-to-add argument.** Two candidate resolutions this would distinguish between: (a) the target passed is not actually `field_0x300` — e.g. `lbLog`/field `0x2dc`, a `TListBox`-shaped control that *would* support `+0x30`/`+0x34` access, and `field_0x300` was misread as the wrong argument in the call; or (b) `Self` in `0x4a120c`'s frame is not `frmGITRServer` at all despite being reached from a confirmed `frmGITRServer` handler. Neither has been verified — this is the exact next disassembly task, not an answer.
+
+### 9.5 Database component table (confirmed so far)
+
+| Component | Offset | Class | Instantiated | Explicitly opened? | First confirmed use | Injected into |
+|---|---|---|---|---|---|---|
+| `ChatDatabase` | `0x2e0` | `TJHDataStorage` | DFM-owned (form-streamed) | No `.Open` call found; no `AutoOpen=True` in DFM | Read + logged via `0x45b990`, in `FormCreate` | `lbLog` (indirectly) |
+| `AdminDatabase` | `0x32c` | `TJHDataStorage` | DFM-owned | **Yes** — `FormCreate` → `0x4731dc` | Opened in `FormCreate`; later read + stored into `field_0x2c` of new objects, only in `TGITROperatorObject` branch (§7) | `TGITROperatorObject` instances |
+| `ActionDatabase` | `0x334` | `TJHCompressedDataStorage` (BZIP2, block 9) | DFM-owned | **No** — untouched in `FormCreate`; no `.Open` call found anywhere | None found | None found |
+| `FightDatabase` | `0x338` | `TJHCompressedDataStorage` (BZIP2, block 9) | DFM-owned | **No** — untouched in `FormCreate` | Read, passed to `0x45b634` (only call site), in `TGITRBaseChatObject` branch (§7) | `TGITRBaseChatObject` instances |
+| `sdb` | `0x33c` | `TJHCompressedDataStorage` (BZIP2, block 9) | DFM-owned | **No** | **None found anywhere in the binary** (§7) | None |
+
+`ActionDatabase` and `sdb` have no confirmed open, load, or injection path anywhere — a genuine, separate gap from the `field_0x300` contradiction.
+
+### 9.6 Startup call graph (confirmed portion only)
+
+```
+FormCreate (0x49e910)
+ ├─ AdminDatabase.Open              (0x4731dc)
+ ├─ GITRServer.RegisterClass ×4     (0x45a6a8)  [TGITRBaseChatObject / TGITROperatorObject / TGITRPrimaryOpObject / TGITRBaseFightObject]
+ ├─ ChatDatabase read+log           (0x42c0cc → 0x45b990, into lbLog)
+ └─ SetMaxUsers(15)                 (0x49fbf0)
+
+btnStartStopClick (0x49edfc)
+ └─ [Self.field_0x2d0+0x64] clear
+      └─ 0x4a120c
+           ├─ log "connected"                (string 0x4a17c4, via 0x462fa0)
+           └─ log "retrieving moves database" (string 0x4a17d8, via 0x462fa0)
+                └─ ??? — NO FURTHER CONFIRMED STEP FOUND
+```
+
+**The chain stops here.** No confirmed call, callback registration, or event wiring inside `0x4a120c` (or anything it calls) leads toward `REQMOVES`, `GMCC`, or an "arena now listening" state. `GMCC`'s `REQMOVES` send (§4/§6/`commands/reqmoves.py`) and `0x4a120c`'s log-append calls are the two confirmed halves of "connected / retrieving moves database" — but **no disassembly-confirmed link connects them**, and no function was found that runs after `REQMOVES` gets (or fails to get) a response. This matches §6 item 12: the accepted `REQMOVES` response format, and what unblocks the arena past this state, remains genuinely unknown from static analysis alone.
+
+### 9.7 Direct answers to the operator's questions
+
+- **What function emits "connected"/"retrieving moves database"?** `0x4a120c`, reached only from `btnStartStopClick` (`0x49edfc`) via a boolean gate on `[Self.field_0x2d0]+0x64`.
+- **What condition clears it?** Not found. `0x4a120c` contains no wait/poll/callback-registration pattern — a straight-line pair of log-append calls, nothing conditional inside it.
+- **What success path follows?** Not found — this is the gap in 9.6.
+- **What callback/response is expected next?** Still the `REQMOVES` response content itself (§6 item 12) — no new evidence changes this.
+- **Which function transitions the arena from "retrieving moves database" to accepting clients? Not located.** No function was found anywhere that (a) is called after `0x4a120c`, (b) references `GMCC`'s response-handling state, or (c) references `GITRServer`'s listen/accept state conditioned on the moves-database step. The missing piece is either (i) a callback registered on `GMCC` for `TMovesDBCommand`'s response whose registration site this pass didn't find, or (ii) code reached only via virtual dispatch (the same wall already documented for `METAARENALIST`/`RETRCOUNTRIES`'s send sites, §4/§8). Distinguishing between these needs either the VMT (explicitly out of scope) or a live debugger, neither available this pass.
+
+### 9.8 `TGITRObjectBrokerAfterCreateObject` — dependency injection, consolidated from §7
+
+No new disassembly beyond §7 was done this pass (per instruction, only as far as it helps explain dependency injection):
+
+```
+GITRObjectBroker.OnAfterCreateObject (0x49e9f8)
+ ├─ TGITRBaseChatObject  → FightDatabase read, passed to 0x45b634
+ ├─ TGITRBaseFightObject → (no database wiring found)
+ ├─ TGITROperatorObject  → AdminDatabase read, stored into object.field_0x2c
+ └─ TGITRPrimaryOpObject → (~10 callback pairs wired; no database wiring found)
+```
+
+### 9.9 Confidence summary
+
+- **CONFIRMED (disassembly):** all VAs, call sites, and behaviors in 9.2, 9.3, 9.6 (up to the point marked "NO FURTHER CONFIRMED STEP FOUND"), and 9.4's description of `0x462fa0`'s requirements.
+- **CONFIRMED (RTTI/DFM):** the field table in 9.1, `lblLabel1`'s class and caption, all five database components' classes and offsets.
+- **STRONG INFERENCE:** none added this pass beyond what §7 already carried forward (e.g. `TfrmArenaAdmin` transmitting list contents over the wire).
+- **UNKNOWN / explicitly unresolved:** the `field_0x300` vs `0x462fa0` contradiction (9.4); what happens after `0x4a120c` (9.6/9.7); `ActionDatabase`/`sdb`'s open/load/injection paths (9.5); the accepted `REQMOVES` response format (unchanged from §6 item 12).
+
+---
+
 Update the table in §5 and the confidence markers throughout this document as each of these gets resolved — and please don't upgrade a confidence marker without a corresponding file in `captures/` (for runtime) or a specific address/offset (for disassembly) to point to.

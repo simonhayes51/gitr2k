@@ -916,3 +916,71 @@ Full write-up added to docs/protocol.md section 8. No server-side code
 changes or live test this session - purely DFM/RTTI-based static
 analysis of gitr2k.exe specifically (first time this session focused on
 the client binary rather than arena.exe).
+
+================================================================================
+2026-07-23, seventh session: static analysis pass on arena.exe's startup path
+(no code changes, no new experiment - see docs/protocol.md section 9)
+================================================================================
+
+Operator supplied a routine runtime capture confirming no protocol-level
+change from prior sessions (arena.exe MCC/OWNER/SETPORT/SETINFO/REQMOVES
+handshake, gitr2k.exe METAARENALIST/RETRCOUNTRIES/COUNTRY, and BOGUS
+keepalive all behaving exactly as already documented):
+
+[2026-07-23 15:29:38.508] SERVER_LISTENING - Listening on 0.0.0.0:9182
+[2026-07-23 15:29:55.931] CONNECT 100.64.0.2:39816
+  00000000  43 4c 41 55 54 48 20 4e 49 4c 20 4e 49 4c 20 47  |CLAUTH NIL NIL G|
+[2026-07-23 15:30:22.103] RECV 100.64.0.3:43442  len=24
+  00000010  20 4d 43 43 20 30 0d 0a                          | MCC 0..|
+  -> COMMAND_SEEN: MCC (arena registration), name='Test'. ArenaRegistry
+     updated. Sent ack 'OWNER Test' (confirmed-working, per commands/mcc.py).
+  00000000  53 45 54 50 4f 52 54 20 37 30 37 32 0d 0a        |SETPORT 7072..|
+[2026-07-23 15:30:22.362] RECV 100.64.0.3:43442  len=24
+  00000000  53 45 54 49 4e 46 4f 20 30 20 31 35 0d 0a 52 45  |SETINFO 0 15..RE|
+  ASCII: b'SETINFO 0 15\r\nREQMOVES\r\n'
+[2026-07-23 15:30:24.917] CONNECT 100.64.0.4:44630   (separate connection - gitr2k.exe client)
+  ASCII: b'CLAUTH  NIL METAARENALIST 0\r\n'
+  (server's guessed METAARENALIST/RETRCOUNTRIES response, per docs/protocol.md
+   section 5/6 items 5/8, sent back on this connection)
+[2026-07-23 15:31:02.258] RECV 100.64.0.3:43442  len=7
+  ASCII: b'BOGUS\r\n'
+
+No new protocol tokens or response formats confirmed by this capture; it
+matches the already-documented, still-open state (arena stuck at "retrieving
+moves database" after REQMOVES, no response sent - see commands/reqmoves.py).
+
+Per operator instruction, this session's work was 100% static disassembly of
+arena_unpacked.exe (no live test), focused exclusively on the arena server's
+own startup path (FormCreate / btnStartStopClick) rather than protocol
+tokens. Full findings in docs/protocol.md section 9. Summary:
+
+- Fixed a regex bug in the RTTI field-name extraction script (excluded ASCII
+  digits, silently dropping lblLabel1/lblLabel2/N1/mmishow1/mmiexit1 from
+  earlier output) and re-derived frmGITRServer's full field table gaplessly,
+  byte-precise, from a known-good anchor. No contradictions with the
+  previously-published section 7 database wiring.
+- FormCreate (0x49e910) confirmed sequence: AdminDatabase.Open (0x4731dc,
+  the ONLY explicit database-open call in FormCreate) -> 4x
+  GITRServer.RegisterClass (0x45a6a8) for the four object-broker types ->
+  ChatDatabase string read + log (0x42c0cc/0x45b990) -> SetMaxUsers(15)
+  (0x49fbf0, cross-validating the confirmed SETINFO 0 15 wire capture).
+  ActionDatabase/FightDatabase/sdb confirmed NOT touched anywhere in
+  FormCreate.
+- btnStartStopClick (0x49edfc, confirmed via RTTI) confirmed to be the ONLY
+  caller of 0x4a120c, the function that logs both "connected" and
+  "retrieving moves database" (both string VAs confirmed, both passed
+  through the log-append helper 0x462fa0).
+- UNRESOLVED CONTRADICTION, explicitly flagged rather than guessed past:
+  0x462fa0 requires a TStrings-shaped target (+0x30/+0x34 fields), but the
+  trusted RTTI table says the log call's target field (field_0x300) is
+  lblLabel1, a TLabel per the DFM - structurally incompatible. Precise next
+  step identified (not yet done): re-disassemble 0x4a120c instruction-by-
+  instruction to confirm which register/field is actually passed as
+  0x462fa0's target vs. its string argument.
+- No confirmed function found anywhere that runs after 0x4a120c's two log
+  calls - the call chain from "Start" to "arena listening" stops exactly
+  there. This is reported as a precise, identified gap (per operator
+  instruction), not an inferred answer.
+- ActionDatabase and sdb still have zero confirmed open/load/injection path
+  anywhere in the binary (separate, pre-existing gap, not newly caused by
+  this session).
