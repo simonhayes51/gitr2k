@@ -155,3 +155,15 @@ line's own format specifically.
 Experiment #3 (next): a single minimal ARENA <name>\r\n line (no
 players/maxplayers fields), mirroring the exact step-by-step approach
 that found COUNTRY's fix.
+
+--- Ninth test session: RETRARENALIST experiment #3 rejected ---
+Sent: ARENA Test\r\nENDARENALIST\r\n (name only, zero extra fields)
+Client reaction: "an error has occured." again.
+
+This breaks the analogy with COUNTRY (name-alone failed, name+count
+succeeded): here BOTH a bare name (exp #3) and name+2 numbers (exp #1)
+fail. Missing trailing fields alone doesn't explain it the same way.
+
+Experiment #4 (next): ARENA <name> <player_count> (single trailing
+field, no max_players) - continuing the field-count ladder before
+jumping to a bigger hypothesis (e.g. host/port info being required).

@@ -48,12 +48,27 @@ add fields back one at a time instead of guessing a whole shape at once).
     ARENA <name>\r\n
     ENDARENALIST\r\n
 
-Known risks: if this also errors, the problem isn't the trailing
-players/maxplayers fields at all - more likely something about ARENA
-entries needing host/port info to be minimally valid, or a completely
-different field the client requires before it'll accept an ARENA line.
-If it works cleanly, the next round should add back player_count, then
-max_players, one at a time.
+EXPERIMENT #3 RESULT (2026-07-23): "ARENA Test\r\n" (name only, zero
+extra fields) ALSO produced "an error has occured." - same as experiment
+#1's name+2-numbers attempt. This breaks the analogy with COUNTRY (where
+name-alone failed but name+one-count-field succeeded): here, BOTH a bare
+name and name+2 numbers fail, so it isn't simply "missing the trailing
+players/maxplayers fields" the same way COUNTRY was missing its count.
+
+EXPERIMENT #4 (now live): still working through the field-count ladder
+systematically rather than jumping straight to a bigger hypothesis -
+try name + a single trailing field (player_count only, no max_players),
+exactly mirroring COUNTRY's one-extra-field fix, since that specific
+combination hasn't been tried yet.
+
+    ARENA <name> <player_count>\r\n
+    ENDARENALIST\r\n
+
+Known risks: given the COUNTRY analogy already broke down once for this
+command, this may well also fail. If it does, the next hypothesis worth
+testing is that ARENA entries need host/port information (the registered
+arena's actual IP and port), since nothing else in the protocol so far
+carries that, and the client presumably needs it to actually connect.
 """
 
 
@@ -76,14 +91,12 @@ def handle(raw: bytes, client_info: dict, context: dict):
         port=client_info["port"],
         note=(
             f"RETRARENALIST request for country={country!r}. Sending "
-            f"EXPERIMENT #3: ARENA <name> only (no players/maxplayers "
-            f"fields), plus ENDARENALIST, to isolate whether the trailing "
-            f"numeric fields are the problem ({len(arenas)} arena(s) "
-            f"registered - names included, other fields omitted this round "
-            f"- see docstring in commands/retrarenalist.py)."
+            f"EXPERIMENT #4: ARENA <name> <player_count> (single trailing "
+            f"field, no max_players), plus ENDARENALIST ({len(arenas)} "
+            f"arena(s) registered - see docstring in commands/retrarenalist.py)."
         ),
     )
 
-    lines = [f"ARENA {arena['name']}\r\n" for arena in arenas]
+    lines = [f"ARENA {arena['name']} {arena['player_count']}\r\n" for arena in arenas]
     lines.append("ENDARENALIST\r\n")
     return "".join(lines).encode("ascii", errors="replace")
