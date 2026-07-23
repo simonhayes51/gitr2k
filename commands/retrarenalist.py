@@ -64,11 +64,34 @@ combination hasn't been tried yet.
     ARENA <name> <player_count>\r\n
     ENDARENALIST\r\n
 
-Known risks: given the COUNTRY analogy already broke down once for this
-command, this may well also fail. If it does, the next hypothesis worth
-testing is that ARENA entries need host/port information (the registered
-arena's actual IP and port), since nothing else in the protocol so far
-carries that, and the client presumably needs it to actually connect.
+EXPERIMENT #4 RESULT (2026-07-23): "ARENA Test 0\r\nENDARENALIST\r\n"
+(single trailing field) ALSO produced "an error has occured.". All
+three field-count variants tried so far - name only, name+1, name+2 -
+fail. This isn't converging the way COUNTRY's fix did; simply adding or
+removing numeric fields doesn't seem to be the issue.
+
+EXPERIMENT #5 (now live): pivot to a structurally different hypothesis
+instead of continuing the field-count ladder. Unlike a country (just a
+display label + count), an arena entry is something the client will
+actually try to connect to - so it may need connection info (host/port)
+as a structural requirement, not just more display fields. Testing:
+
+    ARENA <name> <host_ip> <port>\r\n
+    ENDARENALIST\r\n
+
+Using the registry's recorded host_ip/arena_port for each arena (the
+host_ip is Railway's internal proxy address as seen by the meta server,
+e.g. 100.64.0.2 - not a real, externally-reachable address a player
+could actually connect to; arena_port is a hardcoded placeholder,
+7072, since MCC doesn't tell us the real one - so even if this shape is
+right, the *values* will need fixing later. This test is purely about
+whether the field count/shape is accepted at all.
+
+Known risks: if this also errors, the ARENA line's expected shape may be
+something else entirely (a completely different field, or key=value
+style pairs, or something not resembling COUNTRY's pattern at all) - at
+that point it may be worth reconsidering whether ARENA truly is the
+right per-item token for this response.
 """
 
 
@@ -91,12 +114,13 @@ def handle(raw: bytes, client_info: dict, context: dict):
         port=client_info["port"],
         note=(
             f"RETRARENALIST request for country={country!r}. Sending "
-            f"EXPERIMENT #4: ARENA <name> <player_count> (single trailing "
-            f"field, no max_players), plus ENDARENALIST ({len(arenas)} "
-            f"arena(s) registered - see docstring in commands/retrarenalist.py)."
+            f"EXPERIMENT #5: ARENA <name> <host_ip> <port> (pivoting to "
+            f"the host/port hypothesis after 3 field-count variants all "
+            f"failed), plus ENDARENALIST ({len(arenas)} arena(s) "
+            f"registered - see docstring in commands/retrarenalist.py)."
         ),
     )
 
-    lines = [f"ARENA {arena['name']} {arena['player_count']}\r\n" for arena in arenas]
+    lines = [f"ARENA {arena['name']} {arena['host_ip']} {arena['arena_port']}\r\n" for arena in arenas]
     lines.append("ENDARENALIST\r\n")
     return "".join(lines).encode("ascii", errors="replace")

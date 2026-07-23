@@ -167,3 +167,20 @@ fail. Missing trailing fields alone doesn't explain it the same way.
 Experiment #4 (next): ARENA <name> <player_count> (single trailing
 field, no max_players) - continuing the field-count ladder before
 jumping to a bigger hypothesis (e.g. host/port info being required).
+
+--- Tenth test session: RETRARENALIST experiment #4 rejected ---
+Sent: ARENA Test 0\r\nENDARENALIST\r\n (single trailing field, player
+count only, no max_players)
+Client reaction: "an error has occured." again.
+
+All three field-count variants now tried (name only, name+1, name+2)
+fail. Not converging like COUNTRY's fix did - simply adding/removing
+numeric fields doesn't seem to be the issue for ARENA.
+
+Experiment #5 (next): pivot away from the field-count ladder to a
+structurally different hypothesis - an arena entry is something the
+client will try to actually connect to, unlike a country label, so
+testing whether it needs host/port info:
+    ARENA <name> <host_ip> <port>\r\n
+(host_ip/port values are placeholders/internal addresses for now - this
+tests whether the shape is accepted at all, not real connectivity.)
