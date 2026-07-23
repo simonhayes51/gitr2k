@@ -22,6 +22,17 @@ def handle_client(conn: socket.socket, addr, logger, dispatcher, registry):
     logger.event("CONNECT", ip=ip, port=port)
     context = {"registry": registry, "logger": logger}
 
+    # CONFIRMED (runtime, 2026-07-23): a single recv() can contain more than
+    # one \r\n-terminated command - observed directly when arena.exe sent
+    # "SETINFO 0 15\r\nREQMOVES\r\n" as one TCP segment. dispatch() only
+    # looks at the first token of whatever bytes it's given, so passing the
+    # whole multi-line chunk through unsplit silently dropped REQMOVES
+    # entirely - it was never dispatched or logged as COMMAND_SEEN. Buffer
+    # incoming bytes and split on line boundaries before dispatching, so
+    # every command gets its own dispatch() call regardless of how the
+    # client happened to batch them on the wire.
+    buffer = b""
+
     try:
         while True:
             try:
@@ -41,24 +52,29 @@ def handle_client(conn: socket.socket, addr, logger, dispatcher, registry):
             # attempt at interpretation - this is our ground truth record.
             logger.packet("RECV", ip, port, data)
 
-            # Best-effort categorization for the human reading the log.
-            # This never raises - malformed/binary data is handled safely.
-            try:
-                response = dispatcher.dispatch(data, {"ip": ip, "port": port}, context)
-            except Exception as e:  # noqa: BLE001 - deliberately broad: must never crash the server
-                logger.event("HANDLER_ERROR", ip=ip, port=port, note=repr(e))
-                response = None
+            buffer += data
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                raw_line = line + b"\n"
 
-            if response:
+                # Best-effort categorization for the human reading the log.
+                # This never raises - malformed/binary data is handled safely.
                 try:
-                    conn.sendall(response)
-                    logger.packet("SEND", ip, port, response)
-                except OSError as e:
-                    logger.event("SEND_ERROR", ip=ip, port=port, note=str(e))
-                    return
-            # If response is None (the current, honest default for every
-            # command), we simply keep the socket open and wait for more
-            # data - "keep sockets alive unless the client disconnects."
+                    response = dispatcher.dispatch(raw_line, {"ip": ip, "port": port}, context)
+                except Exception as e:  # noqa: BLE001 - deliberately broad: must never crash the server
+                    logger.event("HANDLER_ERROR", ip=ip, port=port, note=repr(e))
+                    response = None
+
+                if response:
+                    try:
+                        conn.sendall(response)
+                        logger.packet("SEND", ip, port, response)
+                    except OSError as e:
+                        logger.event("SEND_ERROR", ip=ip, port=port, note=str(e))
+                        return
+                # If response is None (the current, honest default for most
+                # commands), we simply keep the socket open and wait for more
+                # data - "keep sockets alive unless the client disconnects."
     finally:
         try:
             conn.close()

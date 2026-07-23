@@ -327,3 +327,51 @@ Open question for the next real test: does arena.exe's "Start" button
 ever become clickable without a REQMOVES response? Does REQMOVES retry
 periodically like BOGUS did if left unanswered? RETRARENALIST remains
 paused - not touched in this session.
+
+--- Sixteenth test session: re-confirms MCC/OWNER, RETRARENALIST still stuck - but reveals a framing bug ---
+Fresh session against the just-deployed SETPORT/SETINFO/REQMOVES handlers.
+Server log:
+
+    CLAUTH Test 1234 MCC 0\r\n          (arena.exe -> server)
+    OWNER Test\r\n                      (server -> arena.exe)
+    SETPORT 7072\r\n                    (arena.exe -> server, own recv())
+    SETINFO 0 15\r\nREQMOVES\r\n        (arena.exe -> server, ONE recv() -
+                                          two commands coalesced together)
+
+arena.exe's activity log again showed "connected" / "retrieving moves
+database" (re-confirms the MCC/OWNER breakthrough). SETPORT was parsed
+and recorded correctly (registry: arena_port=7072).
+
+BUG FOUND: no COMMAND_SEEN log line ever appeared for SETINFO or
+REQMOVES, even though the raw bytes for both were logged in the RECV
+packet dump. Root cause: server/connection.py passed each raw recv()
+chunk straight to dispatcher.dispatch() as a single blob, and the
+dispatcher only looks at the first token in that blob. Since SETINFO and
+REQMOVES arrived in the same TCP segment, only SETINFO's handler ever
+fired (and only "worked" by accident, because Python's str.split() with
+no separator also splits on \r\n, so the "REQMOVES" text got silently
+absorbed as extra ignored tokens in setinfo.py's field parsing) -
+REQMOVES itself was never dispatched, matched, or logged at all.
+
+FIX: server/connection.py now buffers incoming bytes across recv() calls
+and splits on \n before dispatching, so every \r\n-terminated command
+gets its own individual dispatch() call no matter how the client batches
+multiple commands into one TCP write. Verified locally by replaying the
+exact captured byte sequence (including the coalesced SETINFO+REQMOVES
+chunk) through the fixed connection-handling logic: all four commands
+(MCC, SETPORT, SETINFO, REQMOVES) now dispatch individually and
+correctly, with REQMOVES finally reaching commands/reqmoves.py.
+
+Meanwhile in the gitr2k.exe "Select Arena" dialog (separate connection,
+same test session): METAARENALIST -> RETRCOUNTRIES populated the
+"International" node (Users=1), consistent with prior sessions.
+RETRARENALIST experiment #7 (GETARENA) was sent again and behaved
+exactly as before: no error, but "retrieving arena list" never resolves.
+No new information here - RETRARENALIST remains paused, untouched this
+session.
+
+Because of the framing bug above, we have never actually seen a real,
+correctly-logged REQMOVES COMMAND_SEEN event yet - only inferred its
+presence from the raw byte dump and arena.exe's UI reaction. The next
+real test, with the framing fix in place, should be the first one to
+actually observe it.
