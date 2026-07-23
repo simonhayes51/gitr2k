@@ -18,20 +18,36 @@ This confirms the real flow is a three-stage lazy hierarchy:
                       one country, requested lazily (e.g. only once the
                       user expands that tree node)
 
-GUESSED response shape (NOT confirmed, active experiment #1 for this
-command): reuses ARENA (already a known token, used in the RETRCOUNTRIES
-guess) and ENDARENALIST (already CONFIRMED to exist, previously assumed
-to terminate METAARENALIST's response) as this request's terminator -
-a country-scoped list is still fundamentally "a list of arenas", so
-reusing that pairing is a reasonable first guess:
+EXPERIMENT #1 RESULT (2026-07-23): "ARENA Test 0 20\r\nENDARENALIST\r\n"
+produced "an error has occured." - same generic error as RETRCOUNTRIES's
+early rejected attempts. Meanwhile RETRCOUNTRIES's own COUNTRY line is
+confirmed solid (the "International" node with count 1 kept showing
+correctly throughout). So the fault is specifically in this response,
+not a regression elsewhere.
 
-    ARENA <name> <player_count> <max_players>\r\n   (per arena)
-    ENDARENALIST\r\n
+EXPERIMENT #2 (now live): apply the same isolation technique that found
+RETRCOUNTRIES's fix - test with an EMPTY arena list first (bare
+ENDARENALIST\r\n, no ARENA lines at all), to check whether the basic
+framing/terminator is right before troubleshooting the ARENA line
+format itself.
+
+    ENDARENALIST\r\n   (nothing else)
+
+Known risks: if this ALSO errors, ENDARENALIST might not actually be
+this response's terminator at all (recall it was only ever an ASSUMED
+pairing with METAARENALIST, never itself confirmed - METAARENALIST's
+own response has never been validated by client reaction either, since
+the client always moved on to RETRCOUNTRIES regardless of what
+METAARENALIST got back). If it works cleanly, the next round should add
+back a single ARENA line, probably needing an extra field the way
+COUNTRY did (a host/port pair the client would need to actually connect
+to the arena is a reasonable next guess, since nothing else in the
+protocol so far carries that information).
 
 We don't track which country an arena belongs to yet (only one
 placeholder country exists at all, from commands/retrcountries.py), so
-every registered arena is returned regardless of the requested country
-name for this first test.
+every registered arena would be returned regardless of the requested
+country name, once ARENA lines are reintroduced.
 """
 
 
@@ -54,16 +70,11 @@ def handle(raw: bytes, client_info: dict, context: dict):
         port=client_info["port"],
         note=(
             f"RETRARENALIST request for country={country!r}. Sending "
-            f"EXPERIMENTAL guessed response with {len(arenas)} registered "
-            f"arena(s) (country filtering not implemented yet - see "
-            f"docstring in commands/retrarenalist.py)."
+            f"EXPERIMENT #2: bare ENDARENALIST only, no ARENA lines, to "
+            f"isolate why experiment #1 produced 'an error has occured.' "
+            f"({len(arenas)} arena(s) registered but deliberately omitted "
+            f"this round - see docstring in commands/retrarenalist.py)."
         ),
     )
 
-    lines = []
-    for arena in arenas:
-        max_players = arena["max_players"] if arena["max_players"] is not None else 20
-        lines.append(f"ARENA {arena['name']} {arena['player_count']} {max_players}\r\n")
-    lines.append("ENDARENALIST\r\n")
-
-    return "".join(lines).encode("ascii", errors="replace")
+    return b"ENDARENALIST\r\n"

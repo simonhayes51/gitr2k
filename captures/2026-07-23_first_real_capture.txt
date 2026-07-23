@@ -132,3 +132,15 @@ already-confirmed ARENA and ENDARENALIST tokens:
 Verified locally end-to-end (MCC -> METAARENALIST -> RETRCOUNTRIES ->
 RETRARENALIST, replaying the exact real-observed sequence). Awaiting the
 next real client reaction.
+
+--- Seventh test session: RETRARENALIST experiment #1 result ---
+Sent: ARENA Test 0 20\r\nENDARENALIST\r\n
+Client reaction: "an error has occured." again (same generic error as
+RETRCOUNTRIES's early rejected attempts). The "International" node with
+count 1 kept displaying correctly throughout, confirming RETRCOUNTRIES
+itself is unaffected - the fault is specifically in this new response.
+
+Experiment #2 (next): bare ENDARENALIST\r\n alone (empty arena list, no
+ARENA lines), applying the same isolation technique that found
+RETRCOUNTRIES's fix, to check whether the basic framing/terminator is
+right before troubleshooting the ARENA line format itself.
