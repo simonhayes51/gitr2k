@@ -111,6 +111,16 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
                                  "'RETRARENALIST <country name>\\r\\n'. Confirms a three-stage "
                                  "lazy hierarchy: METAARENALIST -> RETRCOUNTRIES -> "
                                  "RETRARENALIST <country>. See docs/protocol.md section 3."),
+    "GRANTED":        TokenInfo("GRANTED", "arena.exe", CONFIRMED_DISASSEMBLY,
+                                 "Found (2026-07-23) clustered with OWNER near arena.exe's "
+                                 "GMCC.OnArenaOwner handler. Zero findable references anywhere in "
+                                 "the binary - possibly dead code, or referenced through addressing "
+                                 "this analysis pass couldn't trace."),
+    "OWNER":          TokenInfo("OWNER", "arena.exe", CONFIRMED_DISASSEMBLY,
+                                 "Found (2026-07-23) clustered with GRANTED near arena.exe's "
+                                 "GMCC.OnArenaOwner handler (docs/protocol.md section 4, previously "
+                                 "unanalyzed). Its trivial getter function IS referenced once, "
+                                 "unlike GRANTED. Being tested as the MCC acknowledgment token."),
     "GETARENA":       TokenInfo("GETARENA", "gitr2k.exe", CONFIRMED_DISASSEMBLY,
                                  "Found (2026-07-23, second static analysis pass) as a distinct "
                                  "9-byte constant 'GETARENA ' (trailing space baked in, same pattern "

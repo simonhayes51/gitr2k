@@ -253,3 +253,24 @@ back has no bearing on whether RETRARENALIST's response is accepted.
 RETRARENALIST's real response format remains unconfirmed after 7
 content attempts (6 ARENA-prefixed shapes that error, 1 GETARENA-prefixed
 shape that doesn't error but doesn't resolve either).
+
+--- Shifting focus to MCC (arena.exe registration ack) per operator direction ---
+Paused RETRARENALIST after 7 content attempts + BOGUS ruled out (see
+above). Went back to static analysis of arena.exe specifically, since
+docs/protocol.md section 4 already had an unanalyzed lead:
+GMCC.OnArenaOwner handler (GMCCArenaOwner, 0x0049F8F0) - "location only,
+body not yet analyzed" per the original disassembly pass.
+
+Disassembling it revealed it's a tiny event-relay stub, not directly
+informative. But investigating the surrounding string-constant table
+found two new tokens: "GRANTED" (7 bytes) and "OWNER" (5 bytes),
+clustered together. Exhaustive reference search: GRANTED has ZERO
+findable references anywhere in the binary; OWNER's trivial getter
+function has exactly one reference (itself, meaning it's an active
+"return this literal" getter, likely a command-name property).
+
+Experiment #1 for MCC: respond with "OWNER <arena name>\r\n" (e.g.
+"OWNER Test\r\n"), echoing the registered arena's name back with OWNER
+as the acknowledgment token. Verified locally. Awaiting real client
+reaction - does arena.exe's Start button enable, or its activity log
+show anything?
