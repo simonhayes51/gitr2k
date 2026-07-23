@@ -594,3 +594,62 @@ Full class diagram and sequence diagram (Mermaid) added to
 docs/protocol.md section 4. No server-side code changes this session - no
 response deployed for REQMOVES, still reverted to silent per the prior
 session's correction.
+
+--- Static analysis (no live test): traced Self+0xC4, found a real error, retracted a prior claim ---
+Per operator instruction, attempted to trace the object at TMovesDBCommand's
+Self+0xC4 (identify its class, VMT, fields, and whether it's a shared
+registry/parser/chain-of-responsibility object), building on the previous
+session's architecture map.
+
+FOUND (solid): searched the whole binary for TMovesDBCommand.Execute's own
+confirmed address (0x461d34) appearing as raw data - found exactly one hit,
+at VA 0x461686. Reading four consecutive dwords from there gives a clean,
+unambiguous array of Execute() entry points:
+  0x461686 -> 0x461d34  TMovesDBCommand.Execute   (REQMOVES/MOVESDB)
+  0x46168a -> 0x461b2c  TActionsDBCommand.Execute (REQACTIONS/ACTIONSDB)
+  0x46168e -> 0x461f38  TSwearDBCommand.Execute   (REQSWLIST/SWEARDB)
+  0x461692 -> 0x4624a8  a 4th, previously unknown Execute - sends the
+                         literal "WINDB " (trailing space baked in, same
+                         compiled-constant pattern as METAMSG). Handler
+                         shape is different from the other three (builds
+                         a formatted 2-arg string instead of read/reject).
+All four were independently disassembled and are real, clean functions.
+
+RETRACTED (important correction): the previous session's claim that
+TMovesDBCommand's success branch reaches TActionsDBCommand via a specific
+VMT+0x9c dispatch (value 0x461a20) was WRONG. Directly dumped the raw
+bytes at 0x461a20 this session: it is DATA, not code - a run of pointers
+immediately followed by the length-prefixed string "TSwearDBCommand".
+The earlier disassembly of that address was reading garbage that
+happened to re-synchronize into real code only once the byte stream
+reached 0x461b2c (TActionsDBCommand.Execute, independently found via the
+array above) - a coincidental landing mistaken for a working virtual
+dispatch. The "VMT base = 0x461938" computation this depended on is
+itself now suspect for the same reason (reading past a few plausible
+slots runs into embedded class-name string data, not a real extended
+Delphi VMT).
+
+Attempted to trace Self+0xC4's own object regardless: found a byte-pattern
+cluster (searching for "mov [reg+0xC4],reg" across the whole binary,
+0x45f3ba-0x45f5f0) that constructs/destroys/lazily-populates an object
+holding two callback-shaped values (copied from Self's own +0x9c/+0xA0)
+plus back-references to Self - a plausible "pending reply" pattern. Could
+NOT confirm this belongs to TMovesDBCommand's own hierarchy though -
+checking whether TMovesDBCommand's (now-doubted) VMT referenced any of
+these addresses came back empty, which is inconclusive rather than a real
+negative, given the VMT computation itself is in doubt. File-position
+puts this cluster next to Indy's own TIdConnectThread/TIdPollThread and
+just before "TGITRClient"'s name string - may belong to TGITRClient (the
+shared network-client base class) rather than the command hierarchy.
+
+CONCLUSION: reported this correction plus the solid new finding to the
+operator, along with an honest assessment that further manual VMT-style
+reconstruction is hitting real reliability limits without Delphi-RTTI-
+aware tooling (IDR, or IDA/Ghidra with a Delphi plugin) or a live
+debugger - neither available in this environment. Operator chose to STOP
+tracing Self+0xC4 for now rather than continue guessing or switch to
+better tooling. docs/protocol.md section 4 updated in place to mark the
+retraction clearly (kept, not deleted, so the record shows the mistake)
+and add the new Execute-array/WINDB findings. No server-side code changes
+this session - REQMOVES still sends no response, per the prior session's
+correction.

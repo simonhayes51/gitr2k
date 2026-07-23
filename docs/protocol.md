@@ -168,20 +168,11 @@ Key findings, all CONFIRMED (disassembly) after a correction:
 - This correction was cross-validated against real client behavior: `commands/reqmoves.py`'s first experiment sent a bare `MOVESDB\r\n` (informed by the original, wrong reading), and arena.exe's activity log showed exactly the predicted-by-the-corrected-reading outcome: `"Could not connect to main GITR server, message follows: Exception: invalid response"`. The static analysis and the runtime reaction now agree.
 - If the prefix does **not** exactly match `"MOVESDB"`, the **entire line** (not just a remainder) is handed to a further virtual method (`VMT+0x9c`).
 
-### VMT reconstruction (2026-07-23, second pass) - `REQMOVES`/`MOVESDB` is one link in a chain, not a single request
+### VMT reconstruction (2026-07-23, second pass) - ⚠️ RETRACTED, see fourth-pass correction below
 
-To find out what `VMT+0x9c` actually does, this session located the real virtual method table statically rather than guessing:
+**This subsection's central claim was WRONG and is retracted** - kept here (rather than deleted) so the record shows the mistake rather than hiding it. The original text claimed `VMT+0x9c` for `TMovesDBCommand` resolved to `0x461a20`, and that disassembling `0x461a20` revealed a chained `TActionsDBCommand`-shaped handler. A later pass (fourth pass, same day) directly dumped the raw bytes at `0x461a20` and found it is **not code at all** - it's data: a run of pointers immediately followed by the length-prefixed string `"TSwearDBCommand"`. The earlier disassembly of that address was decoding garbage bytes that happened to re-synchronize into real code only once the byte stream reached `0x461b2c` (the true, cleanly-prologued `TActionsDBCommand.Execute`) - and that coincidental landing was mistaken for a working virtual dispatch. The "VMT base = `0x461938`" reconstruction this was built on is unreliable for the same reason (reading past a few legitimate-looking slots runs straight into embedded per-class name-string data, not a real Delphi VMT layout).
 
-1. Found the compiled Pascal shortstring `"TMovesDBCommand"` (length-prefixed, 15 chars) at file offset `0x60d50` (VA of the length byte: `0x461950`).
-2. Raw-scanned the whole binary for that VA appearing as a literal 4-byte pointer (a `vmtClassName`-style reference) - found exactly one occurrence, at VA `0x461910`.
-3. Brute-forced the VMT base by checking every plausible negative offset from `0x461910` for one where `VMT+0x74`, `VMT+0x84`, `VMT+0x9c`, and `VMT+0xC4` (the four offsets actually called from `TMovesDBCommand`'s method) all resolve to addresses inside the `CODE` section - exactly one candidate fit all four: **VMT base = `0x461938`** (i.e. `vmtClassName` sits at offset `-40`/`-0x28` from the VMT pointer for this Delphi build).
-4. That gives `VMT+0x9c = 0x461a20` - disassembled it, expecting a generic "parse the moves data" routine.
-
-It is **not** a generic parser. It's another, near-identical command handler: sends `"REQACTIONS"` (10 chars), reads one line, takes `Copy(line, 1, 9)`, and rejects an **exact match** to the literal `"ACTIONSDB"` (9 chars) with the same `"invalid response"` error - then chains onward again via its own `Self+0xC4`/`VMT+0x9c` call, exactly the same shape as `TMovesDBCommand`.
-
-**CONFIRMED (disassembly):** `REQMOVES`/`MOVESDB` is not an isolated request/response - it's the first link in a chained sequence of startup database-sync commands (at minimum `Moves -> Actions -> ...`, likely continuing further given the previously-found `SWEARDB`/`REQSWLIST` sibling and other scripting-adjacent keywords `SCRIPT`/`PLUGIN`). The rejection rule generalizes: for **any** stage in this family, the response's first N characters (N = length of that stage's own `<NAME>DB`-style literal) must **not** exactly equal that literal, or arena.exe raises `"invalid response"` and (presumably) aborts the whole chain right there - consistent with the real capture showing arena.exe's `MCC`/registration flow visibly breaking after the (wrong) `MOVESDB` experiment.
-
-**Still UNKNOWN:** what content *does* satisfy the "not rejected" branch. Tracing that further would mean identifying the class of the object at `Self+0xC4` (passed into the chained `VMT+0x9c` call alongside the received line) and disassembling its own methods - a comparably-sized reconstruction task to the one just completed. **Paused here on operator instruction** (2026-07-23) to first understand the surrounding subsystem architecture before tracing another individual object - see the subsection immediately below.
+**What remains true from this pass:** `REQMOVES`/`MOVESDB`'s rejection rule (exact match to the 7-char literal triggers `"invalid response"`) is unaffected - that was established from `TMovesDBCommand.Execute`'s own body (`0x461d34`, a real, cleanly-disassembled function) and cross-validated against the real client's reaction, neither of which depended on the retracted VMT claim. **What's now unconfirmed:** the specific mechanism by which `TMovesDBCommand` reaches `TActionsDBCommand` (if it does at all) - see the fourth-pass correction below for what's actually solid.
 
 ### Subsystem architecture (2026-07-23, third pass) - the full command-class family
 
@@ -242,15 +233,15 @@ classDiagram
     TCommandBase <|-- TActionsDBCommand
     TCommandBase <|-- TSwearDBCommand
 
-    TMovesDBCommand ..> TActionsDBCommand : chains to on accept (CONFIRMED disassembly)
-    TActionsDBCommand ..> TSwearDBCommand : chains to on accept (inferred, not yet disassembled)
+    TMovesDBCommand ..> TActionsDBCommand : chain mechanism UNCONFIRMED (see fourth-pass correction)
+    TActionsDBCommand ..> TSwearDBCommand : chain mechanism UNCONFIRMED (see fourth-pass correction)
 ```
 
 **Shared virtual methods - INCONCLUSIVE, flagged honestly rather than asserted.** Attempted to compare VMT slots across `TMovesDBCommand`/`TActionsDBCommand`/`TSwearDBCommand` directly (to see which methods are literally inherited vs overridden) by reconstructing each class's VMT the same way as before (class-name-string cross-reference + brute-forced negative offset). The technique that worked cleanly for `TMovesDBCommand` (and, consistently, for `TMetaMessageCommand`/`TArenaOwnerCommand`/`TUserCommand`/`TGetIPCommand`) produced clearly-garbage, non-CODE-section values for `TActionsDBCommand` and `TSwearDBCommand` specifically - most likely because the single raw-pointer match found for those two classes' class-name strings isn't actually their `vmtClassName` slot (a coincidental 4-byte collision is plausible in a ~700KB binary), rather than the offset genuinely varying per class. **Not resolved this pass** - would need a more rigorous VMT-recovery method (e.g. cross-checking against a known-shared method's address, or proper Delphi-aware tooling) to answer reliably. Given this, no confident claim is made here about which specific methods are shared vs overridden beyond what's already directly disassembled (`Execute`/`SendCommand`/`ReadLn`-shaped logic is clearly duplicated per-class in the compiled output, whether via override or per-class code generation).
 
-**Does `Self+0xC4` point to one common database object? UNKNOWN - not investigated this pass**, per operator instruction to understand the architecture first. `Self+0xC4` is confirmed (by the calling convention: `mov edx,[eax+0xc4]` where `eax` is the object instance, not the VMT) to be an **instance field**, not a virtual method slot - but whether every `TMovesDBCommand`/`TActionsDBCommand`/`TSwearDBCommand` instance holds the same shared object there (a singleton "database registry"), or each holds a distinct "reference to the next command in the chain" (classic chain-of-responsibility), is exactly the open question deferred until this architecture review was done.
+**Does `Self+0xC4` point to one common database object? UNKNOWN - trace attempted, inconclusive, paused on operator instruction.** See the fourth-pass correction immediately below for what was found and why it wasn't conclusive.
 
-**Sequence diagram - the confirmed/inferred chain, from `MCC` onward:**
+**Sequence diagram - what's CONFIRMED vs UNCONFIRMED, from `MCC` onward:**
 
 ```mermaid
 sequenceDiagram
@@ -263,25 +254,44 @@ sequenceDiagram
     Arena->>Server: SETPORT port
     Arena->>Server: SETINFO players max
 
-    Note over Arena,Server: CONFIRMED (runtime+disassembly) - TMovesDBCommand
+    Note over Arena,Server: CONFIRMED (runtime+disassembly) - TMovesDBCommand.Execute
     Arena->>Server: REQMOVES
     Server-->>Arena: response line
     alt first 7 chars == "MOVESDB" (exact)
-        Arena->>Arena: raise "invalid response" (chain aborts - REAL, OBSERVED behaviour)
+        Arena->>Arena: raise "invalid response" (CONFIRMED - real, observed behaviour)
     else first 7 chars != "MOVESDB"
-        Note over Arena: CONFIRMED (disassembly) - chains to TActionsDBCommand
-        Arena->>Server: REQACTIONS
-        Server-->>Arena: response line
-        alt first 9 chars == "ACTIONSDB" (exact)
-            Arena->>Arena: raise "invalid response" (chain aborts, inferred symmetric to Moves)
-        else first 9 chars != "ACTIONSDB"
-            Note over Arena: INFERRED (not yet disassembled) - chains to TSwearDBCommand
-            Arena->>Server: REQSWLIST
-            Server-->>Arena: response line
-            Note over Arena,Server: not yet observed on the wire - REQMOVES itself is still unanswered in every live test so far
-        end
+        Note over Arena: UNCONFIRMED - does this reach TActionsDBCommand.Execute at all,<br/>and if so, how? (chain mechanism retracted, see below)
     end
+
+    Note over Arena,Server: TActionsDBCommand.Execute exists and is independently confirmed<br/>(disassembled, sends REQACTIONS, same rejection shape) - but whether/how<br/>TMovesDBCommand reaches it is now UNCONFIRMED, not CONFIRMED as previously stated
 ```
+
+### Correction (2026-07-23, fourth pass) - the VMT+0x9c chain claim was wrong; here's what's actually solid
+
+Attempting to trace `Self+0xC4` (per operator instruction, after the architecture review above) surfaced a genuine methodology failure worth recording in detail, since it corrects claims already committed to this document.
+
+**What's solid (found via a more reliable technique - searching for a known, independently-confirmed address as raw data, rather than guessing offsets):**
+
+Searched the whole binary for the literal 4-byte value `0x461d34` (`TMovesDBCommand.Execute`'s confirmed address) appearing as data. Found exactly one hit, at VA `0x461686`. Reading four consecutive dwords starting there gives a clean, unambiguous array:
+
+```
+VA 0x461686: 0x461d34   TMovesDBCommand.Execute    (REQMOVES/MOVESDB)
+VA 0x46168a: 0x461b2c   TActionsDBCommand.Execute  (REQACTIONS/ACTIONSDB)
+VA 0x46168e: 0x461f38   TSwearDBCommand.Execute    (REQSWLIST/SWEARDB)
+VA 0x461692: 0x4624a8   (new) a 4th Execute - sends "WINDB " (trailing space,
+                         same compiled-constant pattern as METAMSG) - not
+                         previously known, likely a match-result/stats report
+```
+
+All four addresses were independently disassembled and are real, clean functions (proper `push ebp / mov ebp,esp` prologues). This is now the most solid finding in this whole investigation thread: there is a genuine 4-entry table of `Execute` entry points for this family, immediately followed in memory by the `"TGITRClient"` string (this app's own network-client wrapper class, confirmed to exist via the class-name scan in the subsystem-architecture pass above).
+
+**What's retracted:** the claim that `TMovesDBCommand.Execute`'s internal `call [ebx+0x9c]` (where `ebx` = `TMovesDBCommand`'s own dereferenced Self-pointer) resolves to `0x461a20`, and that this represents "the Actions chain". Directly dumping raw bytes at `0x461a20` shows it is **data** (a pointer run immediately followed by the `"TSwearDBCommand"` string), not code - the earlier "successful" disassembly of that region was reading through this data and coincidentally re-synchronizing into real code at `0x461b2c` (`TActionsDBCommand.Execute`, found completely independently via the array above). The two facts got conflated. **The true value actually stored at `TMovesDBCommand`'s real `Self+0` → VMT/descriptor → `+0x9c` slot has not been reliably determined** - the "VMT base = `0x461938`" computation it depended on is itself suspect, since reading forward from it runs into the same kind of embedded string data rather than a clean, extended method table.
+
+**Reframed understanding:** this `TCommandBase` family likely does not use a textbook Delphi VMT for dispatch at all - the ~112-byte, per-class blocks found during the subsystem-architecture pass (mixing a few pointers with an inline class-name string) look like a **hand-rolled per-class descriptor record**, not RTTI's standard negative-offset/VMT layout. That would explain every inconsistency hit while brute-forcing offsets: real Delphi VMTs don't interleave string data into the method-pointer region the way these do.
+
+**Attempt to trace `Self+0xC4`'s object, and why it's inconclusive:** searched for the byte pattern `mov [reg+0xC4], reg` (opcode `89` with a disp32 ModRM) across the whole binary and found a small, tightly-clustered group of functions (`0x45f3ba`-`0x45f5f0`) that construct, destroy, and lazily populate an object at instance-offset `0xC4` - storing two callback-shaped values (copied from `Self`'s own `+0x9c`/`+0xA0`) into the new object, plus several back-references to `Self`. This is a plausible "pending reply / async continuation" pattern. However, **this cluster could not be confirmed to belong to `TMovesDBCommand`'s own hierarchy** - checking whether `TMovesDBCommand`'s (unreliable) "VMT" referenced any of these addresses came back empty, which is inconclusive rather than a real negative result, given the VMT computation itself is now in doubt. File-position proximity puts this cluster right next to Indy's own `TIdConnectThread`/`TIdPollThread` classes and just before `TGITRClient`'s name string, so it may belong to `TGITRClient` (the shared base network-client wrapper) rather than to the `TCommandBase` command hierarchy specifically - genuinely unresolved.
+
+**Status: paused here on operator instruction** (2026-07-23) given the demonstrated unreliability of further manual VMT-style reconstruction without Delphi-RTTI-aware tooling (IDR, or IDA/Ghidra with a Delphi plugin) or a live debugger, neither available in this environment. The solid Execute-pointer-array finding stands; the `Self+0xC4` object's exact class, its own fields, and whether it's shared or per-instance remain open questions for a future pass with better tooling.
 
 **Dead end found (2026-07-23):** traced the `"METAARENALIST"` string constant (in gitr2k.exe) to a tiny function at `0x54D01C` that does nothing but return that literal (classic Delphi codegen for `Result := 'METAARENALIST'` — almost certainly a command-name getter on one class in a family of protocol-message classes). Static cross-reference analysis (radare2, full `aaa` auto-analysis, 5353 functions found) turned up **zero callers** of that function. This strongly suggests it's invoked through a Delphi virtual-method-table slot (polymorphic dispatch) rather than a direct call instruction — tracing that needs Delphi-VMT/RTTI-aware tooling (e.g. IDA with Delphi analysis, or "Interactive Delphi Reconstructor") that wasn't available for this pass. Static disassembly is stalled here for now; see §5/§6 for the empirical approach taken instead.
 
