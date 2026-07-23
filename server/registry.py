@@ -82,6 +82,30 @@ class ArenaRegistry:
         with self._lock:
             self._arenas.pop(name, None)
 
+    def set_port(self, name: str, port: int):
+        """CONFIRMED (runtime, 2026-07-23): arena.exe reports its real listening
+        port via a bare SETPORT <port>\\r\\n sent right after MCC/OWNER - see
+        commands/setport.py. Replaces the DEFAULT_ARENA_PORT placeholder."""
+        with self._lock:
+            entry = self._arenas.get(name)
+            if entry:
+                entry.arena_port = port
+                entry.touch()
+
+    def set_info(self, name: str, player_count: int, max_players: int):
+        """CONFIRMED (runtime, 2026-07-23): arena.exe reports live stats via a
+        bare SETINFO <player_count> <max_players>\\r\\n sent right after
+        SETPORT - see commands/setinfo.py. Field order (player_count then
+        max_players) is inferred from typical convention, not independently
+        confirmed - the two numbers observed so far (0, 15) are consistent
+        with either order for a freshly-started, empty arena."""
+        with self._lock:
+            entry = self._arenas.get(name)
+            if entry:
+                entry.player_count = player_count
+                entry.max_players = max_players
+                entry.touch()
+
     def list_arenas(self):
         with self._lock:
             return [e.to_dict() for e in self._arenas.values()]

@@ -88,7 +88,11 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
                                  "arena.exe's registration command with the meta server, sent as the "
                                  "<COMMAND> field of a CLAUTH envelope: 'CLAUTH <arena name> "
                                  "<arena password> MCC <version>\\r\\n'. Matches the GMCC component "
-                                 "name found via disassembly. Response format still UNKNOWN."),
+                                 "name found via disassembly. Response CONFIRMED (runtime, 2026-07-23): "
+                                 "'OWNER <arena name>\\r\\n' causes arena.exe's activity log to show "
+                                 "'connected'/'retrieving moves database' and triggers three new bare "
+                                 "follow-up commands: SETPORT, SETINFO, REQMOVES. See commands/mcc.py "
+                                 "and captures/2026-07-23_first_real_capture.txt."),
     "RETRCOUNTRIES":  TokenInfo("RETRCOUNTRIES", "gitr2k.exe", CONFIRMED_RUNTIME,
                                  "Sent bare (no CLAUTH envelope) immediately after a METAARENALIST "
                                  "response, on the same connection - this is what the 'Select Arena' "
@@ -116,11 +120,14 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
                                  "GMCC.OnArenaOwner handler. Zero findable references anywhere in "
                                  "the binary - possibly dead code, or referenced through addressing "
                                  "this analysis pass couldn't trace."),
-    "OWNER":          TokenInfo("OWNER", "arena.exe", CONFIRMED_DISASSEMBLY,
+    "OWNER":          TokenInfo("OWNER", "arena.exe", CONFIRMED_RUNTIME,
                                  "Found (2026-07-23) clustered with GRANTED near arena.exe's "
                                  "GMCC.OnArenaOwner handler (docs/protocol.md section 4, previously "
                                  "unanalyzed). Its trivial getter function IS referenced once, "
-                                 "unlike GRANTED. Being tested as the MCC acknowledgment token."),
+                                 "unlike GRANTED. CONFIRMED (runtime, 2026-07-23) as the MCC "
+                                 "acknowledgment: 'OWNER <arena name>\\r\\n' sent in response to MCC "
+                                 "unblocks arena.exe's registration flow (real, observed client "
+                                 "reaction - see commands/mcc.py)."),
     "GETARENA":       TokenInfo("GETARENA", "gitr2k.exe", CONFIRMED_DISASSEMBLY,
                                  "Found (2026-07-23, second static analysis pass) as a distinct "
                                  "9-byte constant 'GETARENA ' (trailing space baked in, same pattern "
@@ -132,7 +139,34 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
                                  "one-shot signal) while a request sits unanswered/unsatisfied. "
                                  "Purpose still UNKNOWN - being tested (echo it back) to see if "
                                  "acknowledging it unblocks whatever the client is actually waiting "
-                                 "on, versus it being unrelated network-level keepalive noise."),
+                                 "on, versus it being unrelated network-level keepalive noise. "
+                                 "RESOLVED (2026-07-23): observed over 6 cycles / 4+ minutes with a "
+                                 "fixed ~40s period regardless of server response; echoing it back "
+                                 "had zero effect. Concluded to be unrelated network-level keepalive "
+                                 "noise, not protocol-semantic."),
+    "SETPORT":        TokenInfo("SETPORT", "arena.exe", CONFIRMED_RUNTIME,
+                                 "Sent bare (no CLAUTH envelope) on the same connection immediately "
+                                 "after arena.exe receives the MCC/OWNER acknowledgment: "
+                                 "'SETPORT <port>\\r\\n'. Observed value 7072, matching the "
+                                 "CONFIRMED (disassembly) default listening port. Correlated back to "
+                                 "the registering arena via the per-connection context dict's "
+                                 "arena_name (set by commands/mcc.py), since this command does not "
+                                 "repeat the arena name. No response sent by the server (untested "
+                                 "whether one is expected). See commands/setport.py."),
+    "SETINFO":        TokenInfo("SETINFO", "arena.exe", CONFIRMED_RUNTIME,
+                                 "Sent bare immediately after SETPORT on the same connection: "
+                                 "'SETINFO <a> <b>\\r\\n'. Observed values '0 15'. Field order "
+                                 "(player_count then max_players) is STRONG_INFERENCE from typical "
+                                 "convention, not independently confirmed - both observed numbers are "
+                                 "consistent with either order for a freshly-started, empty arena. "
+                                 "See commands/setinfo.py."),
+    "REQMOVES":       TokenInfo("REQMOVES", "arena.exe", CONFIRMED_RUNTIME,
+                                 "Sent bare immediately after SETINFO on the same connection, with no "
+                                 "arguments: 'REQMOVES\\r\\n'. Matches arena.exe's 'retrieving moves "
+                                 "database' UI status text. Response format completely UNKNOWN - "
+                                 "deliberately not yet guessed; server currently only observes/logs "
+                                 "this to gather more evidence before experimenting, per the project's "
+                                 "isolate-one-variable methodology. See commands/reqmoves.py."),
 }
 
 
