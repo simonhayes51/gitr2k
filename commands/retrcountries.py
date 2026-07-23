@@ -32,17 +32,26 @@ an error. This isolates the problem precisely: the basic framing/
 terminator is fine; something about the per-item COUNTRY/ARENA line
 format specifically is what experiment #2 got wrong.
 
-EXPERIMENT #4 (now live): add back just a bare COUNTRY line, still with
-zero ARENA lines under it, to check whether the COUNTRY line itself is
-fine on its own and the problem is isolated to ARENA lines specifically.
+EXPERIMENT #4 RESULT (2026-07-23): a bare COUNTRY line with zero ARENA
+lines under it ("COUNTRY International\r\nENDCOUNTRYLIST\r\n") ALSO
+produced "an error has occured." - same as experiment #2. Combined with
+experiment #3 (empty list works), this narrows the fault precisely to
+the COUNTRY line's own format, not anything ARENA-specific.
 
-    COUNTRY <name>\r\n
+EXPERIMENT #5 (now live): COUNTRY with no other fields is what breaks;
+ARENA lines carry trailing numeric fields (players/max), so guessing
+COUNTRY is missing a trailing count field of its own (e.g. how many
+arenas follow, letting the client pre-size something before reading
+them) - a missing integer field is a classic cause of this kind of
+generic index/parse error.
+
+    COUNTRY <name> <arena_count>\r\n
     ENDCOUNTRYLIST\r\n
 
-Known risks with this guess: if this also errors, the problem is in
-COUNTRY's own format (or in having any non-empty list at all). If it
-works cleanly, the next round should test adding a single ARENA line
-back in.
+Known risks with this guess: still just a guess at which field is
+missing and where; if this also errors, the next round should try
+other candidate fields (a country code/ID instead of/alongside the
+name, a different field order, etc).
 """
 
 PLACEHOLDER_COUNTRY = "International"
@@ -58,12 +67,12 @@ def handle(raw: bytes, client_info: dict, context: dict):
         ip=client_info["ip"],
         port=client_info["port"],
         note=(
-            f"RETRCOUNTRIES request. Sending EXPERIMENT #4: bare COUNTRY line "
-            f"plus ENDCOUNTRYLIST, still no ARENA lines, to isolate whether "
-            f"COUNTRY itself is fine on its own ({len(arenas)} arena(s) "
-            f"registered but deliberately omitted this round - see docstring "
-            f"in commands/retrcountries.py)."
+            f"RETRCOUNTRIES request. Sending EXPERIMENT #5: COUNTRY line with "
+            f"a trailing arena-count field added, plus ENDCOUNTRYLIST, still "
+            f"no ARENA lines, to test whether COUNTRY needs a count field "
+            f"({len(arenas)} arena(s) registered - count reflected below, "
+            f"lines still omitted - see docstring in commands/retrcountries.py)."
         ),
     )
 
-    return f"COUNTRY {PLACEHOLDER_COUNTRY}\r\nENDCOUNTRYLIST\r\n".encode("ascii", errors="replace")
+    return f"COUNTRY {PLACEHOLDER_COUNTRY} {len(arenas)}\r\nENDCOUNTRYLIST\r\n".encode("ascii", errors="replace")

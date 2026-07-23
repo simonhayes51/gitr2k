@@ -89,3 +89,15 @@ ARENA per-item line format.
 Experiment #4 (next): add back a single bare COUNTRY line, still with
 zero ARENA lines, to further isolate whether COUNTRY itself is fine and
 the problem is specifically in ARENA lines.
+
+--- Fifth test session: experiment #4 (bare COUNTRY line) result ---
+Sent: COUNTRY International\r\nENDCOUNTRYLIST\r\n (zero ARENA lines)
+Client reaction: "an error has occured." again (same as experiment #2).
+
+Combined with experiment #3 (empty list works cleanly), this narrows
+the fault precisely to the COUNTRY line's own format - not anything
+ARENA-specific, since ARENA lines weren't even present this round.
+
+Experiment #5 (next): add a trailing arena-count field to the COUNTRY
+line, guessing it needs one the way ARENA lines carry numeric fields:
+    COUNTRY International <count>\r\n
