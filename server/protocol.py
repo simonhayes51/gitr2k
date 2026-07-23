@@ -118,9 +118,11 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
                                  "Being tried as the RETRARENALIST per-item line prefix after six "
                                  "straight rejections of ARENA-prefixed guesses."),
     "BOGUS":          TokenInfo("BOGUS", "gitr2k.exe", CONFIRMED_RUNTIME,
-                                 "Sent bare, ~38s after a RETRARENALIST request got no response. "
-                                 "Purpose UNKNOWN - possibly a keepalive/liveness probe after an "
-                                 "idle timeout, possibly something else. No handler yet."),
+                                 "Sent bare, repeatedly (~every 40s, confirmed periodic - not a "
+                                 "one-shot signal) while a request sits unanswered/unsatisfied. "
+                                 "Purpose still UNKNOWN - being tested (echo it back) to see if "
+                                 "acknowledging it unblocks whatever the client is actually waiting "
+                                 "on, versus it being unrelated network-level keepalive noise."),
 }
 
 

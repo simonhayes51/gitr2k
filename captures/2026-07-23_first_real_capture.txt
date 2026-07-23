@@ -217,3 +217,21 @@ never been tested.
 Experiment #7 (next): GETARENA <name> <player_count> <max_players>\r\n
 as the line prefix instead of ARENA, keeping ENDARENALIST (confirmed
 working, experiment #2) as the terminator.
+
+--- Thirteenth test session: GETARENA doesn't error, but doesn't resolve either ---
+Sent: GETARENA Test 0 20\r\nENDARENALIST\r\n
+Client reaction: no "an error has occured." this time - but "Test" never
+appeared under "International" either, and status stayed at "retrieving
+arena list" indefinitely. Waited and confirmed BOGUS\r\n repeats
+periodically (09:36:19, then again 09:36:59 - a ~40s interval), proving
+it's a keepalive/liveness probe, not a one-shot "giving up" signal.
+
+This means GETARENA, like ARENA, hasn't actually solved RETRARENALIST -
+it's merely not rejected as malformed. It also means experiment #2
+(bare ENDARENALIST, empty list) was only ever confirmed "doesn't error
+immediately" - we never checked whether BOGUS would also appear there,
+so it may not be a true confirmed-working terminator either.
+
+Added commands/bogus.py: experiment #1 for BOGUS itself - echo it back
+verbatim, to test whether acknowledging the keepalive unblocks whatever
+the client is actually waiting on.
