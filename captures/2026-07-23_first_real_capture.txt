@@ -197,3 +197,23 @@ line, since RETRARENALIST's response is a flat list, not nested:
     ARENA <country> <name> <player_count> <max_players>\r\n
 If this also fails, worth returning to static analysis rather than
 continuing to guess field combinations blindly.
+
+--- Twelfth test session: RETRARENALIST experiment #6 rejected ---
+Sent: ARENA International Test 0 20\r\nENDARENALIST\r\n
+Client reaction: "an error has occured." again. Six straight rejections.
+
+Went back to static analysis rather than keep guessing field
+combinations. A wider byte-range dump around the METAARENALIST/ARENA/
+COUNTRY string-constant table (0x14c380-0x14c8f0 in gitr2k_unpacked.exe)
+revealed two previously-missed tokens:
+  "GETARENA " (9 bytes, trailing space baked into the constant - same
+               pattern already confirmed for "METAMSG ")
+  " "         (standalone single-space constant, likely a deduplicated
+               field-separator literal)
+"ARENA" (5 bytes, no space) appears twice in this table but every
+experiment so far only ever tried it as the line prefix - GETARENA has
+never been tested.
+
+Experiment #7 (next): GETARENA <name> <player_count> <max_players>\r\n
+as the line prefix instead of ARENA, keeping ENDARENALIST (confirmed
+working, experiment #2) as the terminator.

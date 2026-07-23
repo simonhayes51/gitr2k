@@ -111,6 +111,12 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
                                  "'RETRARENALIST <country name>\\r\\n'. Confirms a three-stage "
                                  "lazy hierarchy: METAARENALIST -> RETRCOUNTRIES -> "
                                  "RETRARENALIST <country>. See docs/protocol.md section 3."),
+    "GETARENA":       TokenInfo("GETARENA", "gitr2k.exe", CONFIRMED_DISASSEMBLY,
+                                 "Found (2026-07-23, second static analysis pass) as a distinct "
+                                 "9-byte constant 'GETARENA ' (trailing space baked in, same pattern "
+                                 "as confirmed METAMSG), separate from the 5-byte 'ARENA' constant. "
+                                 "Being tried as the RETRARENALIST per-item line prefix after six "
+                                 "straight rejections of ARENA-prefixed guesses."),
     "BOGUS":          TokenInfo("BOGUS", "gitr2k.exe", CONFIRMED_RUNTIME,
                                  "Sent bare, ~38s after a RETRARENALIST request got no response. "
                                  "Purpose UNKNOWN - possibly a keepalive/liveness probe after an "

@@ -101,12 +101,43 @@ needed its own count field:
     ARENA <country> <name> <player_count> <max_players>\r\n
     ENDARENALIST\r\n
 
-Known risks: if this also fails, it's worth stepping back from guessing
-field combinations entirely and going back to static analysis - e.g.
-checking whether there's a distinct property-name string (like "Status"
-"Full" "Open") near ARENA in the binary we haven't looked for yet, since
-five straight rejected guesses suggests we may be missing something
-qualitatively different, not just a missing/reordered field.
+EXPERIMENT #6 RESULT (2026-07-23): "ARENA International Test 0 20\r\n"
+also produced "an error has occured.". Six straight rejections now.
+
+STATIC ANALYSIS, round 2 (2026-07-23): went back to the binary rather
+than keep guessing field combinations. A wider byte-range dump around
+the METAARENALIST/ARENA/COUNTRY string-constant table turned up two
+tokens we'd missed entirely:
+
+    "GETARENA " (9 bytes, INCLUDING a trailing space baked directly into
+                 the compiled constant - the same pattern already
+                 CONFIRMED for "METAMSG ", i.e. a literal prefix the code
+                 concatenates a payload directly onto, no extra space
+                 needed)
+    " "         (a standalone single-space string constant - likely a
+                 deduplicated field-separator literal reused by whichever
+                 function builds these lines)
+
+"ARENA" (5 bytes, no trailing space) also appears in this table, TWICE
+(once near METAARENALIST/ENDARENALIST, once near COUNTRY/ENDCOUNTRYLIST)
+- consistent with it genuinely being used in multiple places already
+(matches its use in both commands/metaarenalist.py and here). But
+"GETARENA " is a real, previously-untested token - every experiment so
+far has only ever tried "ARENA" as the line prefix.
+
+EXPERIMENT #7 (now live): try GETARENA instead of ARENA as the per-item
+line prefix, keeping ENDARENALIST as the terminator (that part is
+CONFIRMED working - see experiment #2):
+
+    GETARENA <name> <player_count> <max_players>\r\n
+    ENDARENALIST\r\n
+
+Known risks: this is still a guess about which of the two distinct
+tokens is the right one for this specific response; if GETARENA also
+errors, worth reconsidering whether ARENA even belongs in
+RETRARENALIST's response at all, versus being reserved for a different,
+not-yet-discovered command (a "get one arena's full details" request,
+by analogy with GETNEWS vs GITRNEWS).
 """
 
 
@@ -129,17 +160,16 @@ def handle(raw: bytes, client_info: dict, context: dict):
         port=client_info["port"],
         note=(
             f"RETRARENALIST request for country={country!r}. Sending "
-            f"EXPERIMENT #6: ARENA <country> <name> <player_count> "
-            f"<max_players> (restating the country per-arena, new "
-            f"hypothesis after 4 straight rejections), plus ENDARENALIST "
-            f"({len(arenas)} arena(s) registered - see docstring in "
-            f"commands/retrarenalist.py)."
+            f"EXPERIMENT #7: GETARENA <name> <player_count> <max_players> "
+            f"(newly-found token, distinct from ARENA - see docstring in "
+            f"commands/retrarenalist.py), plus ENDARENALIST ({len(arenas)} "
+            f"arena(s) registered)."
         ),
     )
 
     lines = []
     for arena in arenas:
         max_players = arena["max_players"] if arena["max_players"] is not None else 20
-        lines.append(f"ARENA {country} {arena['name']} {arena['player_count']} {max_players}\r\n")
+        lines.append(f"GETARENA {arena['name']} {arena['player_count']} {max_players}\r\n")
     lines.append("ENDARENALIST\r\n")
     return "".join(lines).encode("ascii", errors="replace")
