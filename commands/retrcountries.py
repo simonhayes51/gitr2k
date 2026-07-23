@@ -25,18 +25,27 @@ zero direct call sites to either the METAARENALIST getter or this error
 string's setter function - both are only reachable through Delphi
 virtual dispatch, untraceable without Delphi-RTTI-aware tooling).
 
-So this is EXPERIMENT #3: send only the bare terminator, no COUNTRY/
-ARENA lines at all, to isolate whether the error comes from the
-per-item line format specifically, or from something more basic (the
-terminator itself, a missing count prefix, etc). One variable changed
-at a time so the client's reaction stays informative.
+EXPERIMENT #3 RESULT (2026-07-23): bare ENDCOUNTRYLIST\r\n alone (no
+COUNTRY/ARENA lines) worked cleanly - the "Select Arena" dialog showed
+its normal "No arenas online. Start own arena server?" prompt instead of
+an error. This isolates the problem precisely: the basic framing/
+terminator is fine; something about the per-item COUNTRY/ARENA line
+format specifically is what experiment #2 got wrong.
 
-    ENDCOUNTRYLIST\r\n   (nothing else)
+EXPERIMENT #4 (now live): add back just a bare COUNTRY line, still with
+zero ARENA lines under it, to check whether the COUNTRY line itself is
+fine on its own and the problem is isolated to ARENA lines specifically.
 
-Known risks with this guess: still no evidence either way about the
-count/framing question above - this is a diagnostic probe, not a belief
-that this is the real format.
+    COUNTRY <name>\r\n
+    ENDCOUNTRYLIST\r\n
+
+Known risks with this guess: if this also errors, the problem is in
+COUNTRY's own format (or in having any non-empty list at all). If it
+works cleanly, the next round should test adding a single ARENA line
+back in.
 """
+
+PLACEHOLDER_COUNTRY = "International"
 
 
 def handle(raw: bytes, client_info: dict, context: dict):
@@ -49,12 +58,12 @@ def handle(raw: bytes, client_info: dict, context: dict):
         ip=client_info["ip"],
         port=client_info["port"],
         note=(
-            f"RETRCOUNTRIES request. Sending EXPERIMENT #3: bare ENDCOUNTRYLIST "
-            f"only, no COUNTRY/ARENA lines, to isolate why experiment #2 "
-            f"produced 'an error has occured.' ({len(arenas)} arena(s) "
+            f"RETRCOUNTRIES request. Sending EXPERIMENT #4: bare COUNTRY line "
+            f"plus ENDCOUNTRYLIST, still no ARENA lines, to isolate whether "
+            f"COUNTRY itself is fine on its own ({len(arenas)} arena(s) "
             f"registered but deliberately omitted this round - see docstring "
             f"in commands/retrcountries.py)."
         ),
     )
 
-    return b"ENDCOUNTRYLIST\r\n"
+    return f"COUNTRY {PLACEHOLDER_COUNTRY}\r\nENDCOUNTRYLIST\r\n".encode("ascii", errors="replace")

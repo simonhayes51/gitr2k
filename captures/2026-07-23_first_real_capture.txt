@@ -75,3 +75,17 @@ is at a hard wall here without better tooling.
 Switching to isolating the variable empirically: next test sends only a
 bare ENDCOUNTRYLIST\r\n (no COUNTRY/ARENA lines) to determine whether
 the error comes from the per-item line format or something more basic.
+
+--- Fourth test session: experiment #3 (bare ENDCOUNTRYLIST) result ---
+Sent: ENDCOUNTRYLIST\r\n (no COUNTRY/ARENA lines at all)
+Client reaction: "Select Arena" dialog showed a clean, normal prompt -
+"No arenas online. Start own arena server?" (Yes/No) - NOT an error.
+
+This isolates the problem precisely: basic RETRCOUNTRIES framing and
+the ENDCOUNTRYLIST terminator are both fine on their own. Experiment #2's
+"an error has occured." must have come specifically from the COUNTRY/
+ARENA per-item line format.
+
+Experiment #4 (next): add back a single bare COUNTRY line, still with
+zero ARENA lines, to further isolate whether COUNTRY itself is fine and
+the problem is specifically in ARENA lines.
