@@ -375,3 +375,72 @@ correctly-logged REQMOVES COMMAND_SEEN event yet - only inferred its
 presence from the raw byte dump and arena.exe's UI reaction. The next
 real test, with the framing fix in place, should be the first one to
 actually observe it.
+
+--- Seventeenth session: framing fix verified live, REQMOVES finally captured correctly ---
+Real test against the deployed framing fix. Log now shows REQMOVES
+correctly split out and logged as its own COMMAND_SEEN event, distinct
+from SETINFO, even though both were still sent in the same recv() as
+before:
+
+    CLAUTH Test 1234 MCC 0\r\n
+    OWNER Test\r\n
+    SETPORT 7072\r\n
+    SETINFO 0 15\r\nREQMOVES\r\n   (one recv(), now split into TWO dispatches)
+    -> COMMAND_SEEN ... SETINFO ...
+    -> COMMAND_SEEN ... REQMOVES ...
+
+This is the first time this project has actually observed a real,
+correctly-logged REQMOVES event (previously it was silently dropped -
+see prior entry). Confirms server/connection.py's line-buffering fix
+works against real traffic, not just the local replay test.
+
+arena.exe's UI still showed "connected" / "retrieving moves database"
+(highlighted, i.e. current/pending status), "Start" still greyed out -
+consistent with REQMOVES getting no response in this particular test
+(the fix was deployed but REQMOVES still returned None at the time this
+capture was taken - the MOVESDB experiment below was added immediately
+after analyzing this log).
+
+Went back to static analysis specifically for REQMOVES/MOVESDB, since
+this project had PREVIOUSLY, INCORRECTLY dismissed MOVESDB as an
+unrelated Pascal-scripting-engine keyword (grouped with BEGIN/WHILE/
+FUNC/SCRIPT/PLUGIN/ACTIONSDB/SWEARDB). Found a real class
+"TMovesDBCommand" in arena.exe's string-constant table, directly
+clustered with "REQMOVES" and an "invalid response" (16 bytes) error
+string - this is a genuine protocol command class, the earlier dismissal
+was wrong. A near-identical sibling class references "REQSWLIST"/
+"SWEARDB" with the same code shape (likely a swear-word/chat-filter
+list), confirming a small family of "request a named database" commands.
+
+Exhaustive raw-bytes cross-reference search (searching for the compiled
+string constants' own virtual addresses as literal 4-byte little-endian
+values elsewhere in the binary) found exactly one call site each for
+REQMOVES and MOVESDB, both inside a single method at arena.exe VA
+0x461d34-0x461e92. Disassembling it revealed:
+
+  1. Sends "REQMOVES" via a virtual call (VMT+0x84) - matches confirmed
+     wire traffic.
+  2. Reads exactly ONE line via a ReadLn-shaped virtual call (VMT+0x74,
+     terminator "\r\n") - no loop for further lines, unlike
+     RETRCOUNTRIES/RETRARENALIST/METAARENALIST's multi-line responses.
+  3. Takes Copy(line, 1, 7) and compares it against the literal
+     "MOVESDB" (7 chars) via a CompareStr-shaped call. Mismatch ->
+     raises the "invalid response" error found in the string table.
+  4. On match, hands the WHOLE line to a further virtual method
+     (VMT+0x9c, not disassembled) for parsing - so fields after
+     "MOVESDB" remain unknown.
+
+EXPERIMENT #1 for REQMOVES, now grounded in real disassembly rather than
+guessed blind: respond with a bare
+
+    MOVESDB\r\n
+
+This satisfies the confirmed prefix check with nothing after it,
+following the same start-minimal methodology that eventually cracked
+RETRCOUNTRIES. Implemented in commands/reqmoves.py, verified locally by
+replaying the full MCC->OWNER->SETPORT->SETINFO->REQMOVES sequence and
+confirming the dispatcher now returns b'MOVESDB\r\n' for REQMOVES.
+
+Awaiting real client reaction: does arena.exe accept this (does "Start"
+enable, does the activity log move past "retrieving moves database")?
+Does it show a visible/logged error? Does REQMOVES retry if rejected?

@@ -160,13 +160,24 @@ KNOWN_TOKENS: Dict[str, TokenInfo] = {
                                  "convention, not independently confirmed - both observed numbers are "
                                  "consistent with either order for a freshly-started, empty arena. "
                                  "See commands/setinfo.py."),
+    "MOVESDB":        TokenInfo("MOVESDB", "arena.exe", CONFIRMED_DISASSEMBLY,
+                                 "Found (2026-07-23) as arena.exe's 'TMovesDBCommand' class name and "
+                                 "response-prefix literal, clustered with 'REQMOVES' and an 'invalid "
+                                 "response' error string. Previously misclassified in this project as "
+                                 "an unrelated Pascal-scripting keyword (alongside BEGIN/WHILE/FUNC/"
+                                 "SCRIPT/PLUGIN/ACTIONSDB/SWEARDB) - that was WRONG for this token. "
+                                 "A near-identical sibling class exists for REQSWLIST/SWEARDB. "
+                                 "CONFIRMED (disassembly): the REQMOVES response must start with this "
+                                 "exact 7-char prefix. See commands/reqmoves.py."),
     "REQMOVES":       TokenInfo("REQMOVES", "arena.exe", CONFIRMED_RUNTIME,
                                  "Sent bare immediately after SETINFO on the same connection, with no "
                                  "arguments: 'REQMOVES\\r\\n'. Matches arena.exe's 'retrieving moves "
-                                 "database' UI status text. Response format completely UNKNOWN - "
-                                 "deliberately not yet guessed; server currently only observes/logs "
-                                 "this to gather more evidence before experimenting, per the project's "
-                                 "isolate-one-variable methodology. See commands/reqmoves.py."),
+                                 "database' UI status text. CONFIRMED (disassembly, 2026-07-23): "
+                                 "arena.exe's TMovesDBCommand reads exactly one response line and "
+                                 "requires it to start with the literal 7-char prefix 'MOVESDB', or "
+                                 "raises an internal 'invalid response' error. Payload past the prefix "
+                                 "still UNKNOWN. Corrects an earlier note that dismissed 'MOVESDB' as an "
+                                 "unrelated scripting keyword. See commands/reqmoves.py."),
 }
 
 
