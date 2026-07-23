@@ -181,7 +181,107 @@ It is **not** a generic parser. It's another, near-identical command handler: se
 
 **CONFIRMED (disassembly):** `REQMOVES`/`MOVESDB` is not an isolated request/response - it's the first link in a chained sequence of startup database-sync commands (at minimum `Moves -> Actions -> ...`, likely continuing further given the previously-found `SWEARDB`/`REQSWLIST` sibling and other scripting-adjacent keywords `SCRIPT`/`PLUGIN`). The rejection rule generalizes: for **any** stage in this family, the response's first N characters (N = length of that stage's own `<NAME>DB`-style literal) must **not** exactly equal that literal, or arena.exe raises `"invalid response"` and (presumably) aborts the whole chain right there - consistent with the real capture showing arena.exe's `MCC`/registration flow visibly breaking after the (wrong) `MOVESDB` experiment.
 
-**Still UNKNOWN:** what content *does* satisfy the "not rejected" branch. Tracing that further would mean identifying the class of the object at `Self+0xC4` (passed into the chained `VMT+0x9c` call alongside the received line) and disassembling its own methods - a comparably-sized reconstruction task to the one just completed, not yet attempted. See `commands/reqmoves.py` for the current (reverted-to-silent) state; no second live experiment has been deployed pending a decision on how much further to invest here.
+**Still UNKNOWN:** what content *does* satisfy the "not rejected" branch. Tracing that further would mean identifying the class of the object at `Self+0xC4` (passed into the chained `VMT+0x9c` call alongside the received line) and disassembling its own methods - a comparably-sized reconstruction task to the one just completed. **Paused here on operator instruction** (2026-07-23) to first understand the surrounding subsystem architecture before tracing another individual object - see the subsection immediately below.
+
+### Subsystem architecture (2026-07-23, third pass) - the full command-class family
+
+Before tracing `Self+0xC4` further, stepped back to map the whole subsystem `TMovesDBCommand` belongs to, using a full-binary scan for Pascal shortstring class names (`T<Name>`) rather than chasing one function at a time.
+
+**Class list - CONFIRMED (string-table evidence).** Found the entire family in one contiguous block of the compiled string table, three infrastructure names followed by eight concrete command classes, with strikingly regular spacing between adjacent entries (112-116 bytes each) - strong evidence these are literal entries in a single class-registration array, not coincidental placement:
+
+```
+TCommandBase            <- infrastructure (base class, believed abstract)
+TCommandClassArray      <- infrastructure (name -> class registry, believed)
+TCommandParser          <- infrastructure (dispatcher, believed)
+
+TGetIPCommand           <- concrete command
+TErrorCommand           <- concrete command
+TMetaMessageCommand     <- concrete command
+TArenaOwnerCommand      <- concrete command
+TUserCommand            <- concrete command
+TMovesDBCommand         <- concrete command  (already known)
+TActionsDBCommand       <- concrete command  (already known, chained from Moves)
+TSwearDBCommand         <- concrete command  (already known, name only so far)
+```
+
+**Mapping classes to known protocol tokens - STRONG INFERENCE from naming, cross-checked against independent earlier findings where possible:**
+
+| Class | Believed token(s) | Basis |
+|---|---|---|
+| `TGetIPCommand` | `YOURIP` | Name match; `YOURIP` already CONFIRMED (disassembly) elsewhere in this doc |
+| `TErrorCommand` | generic error path | Name match; likely what emits the `"an error has occured."` string seen throughout live testing |
+| `TMetaMessageCommand` | `METAMSG` / `BASECHAT` | Name match to the already-disassembled `GMCCMetaMessage` handler (§4 above) |
+| `TArenaOwnerCommand` | `OWNER` / `GRANTED` | Name match to the already-disassembled `GMCCArenaOwner` handler (§4 above) - this is the class behind the CONFIRMED-working MCC ack |
+| `TUserCommand` | `USERENTER` / `USERLEAVE` | Name match only, not independently cross-checked |
+| `TMovesDBCommand` | `REQMOVES` / `MOVESDB` | CONFIRMED (disassembly + runtime), this section |
+| `TActionsDBCommand` | `REQACTIONS` / `ACTIONSDB` | CONFIRMED (disassembly), chained directly from Moves's accept branch |
+| `TSwearDBCommand` | `REQSWLIST` / `SWEARDB` | Name/string match only - not yet reached via disassembly of a chain link (see below) |
+
+**Inheritance tree - STRONG INFERENCE.** All eight concrete classes are believed direct descendants of `TCommandBase` (not a narrower intermediate "database command" base) - no separate `TDBCommand`/`TDatabaseCommand`-style name was found anywhere in the string table between `TUserCommand` and `TMovesDBCommand`, or anywhere else. `TCommandParser` + `TCommandClassArray` look like a classic name-keyed factory/dispatch pair (`TCommandParser` reads a line, looks up the leading token in `TCommandClassArray`, constructs/dispatches to the matching `TCommandBase` descendant) - notably the same architecture this project's own `server/protocol.py` `Dispatcher` independently arrived at, which is a nice, unplanned validation of the overall design approach used in this repo.
+
+```mermaid
+classDiagram
+    class TCommandBase {
+        <<abstract, inferred>>
+    }
+    class TCommandParser {
+        <<infrastructure, inferred>>
+    }
+    class TCommandClassArray {
+        <<infrastructure, inferred: name to class registry>>
+    }
+    TCommandParser ..> TCommandClassArray : looks up token in
+    TCommandClassArray ..> TCommandBase : constructs instances of
+
+    TCommandBase <|-- TGetIPCommand
+    TCommandBase <|-- TErrorCommand
+    TCommandBase <|-- TMetaMessageCommand
+    TCommandBase <|-- TArenaOwnerCommand
+    TCommandBase <|-- TUserCommand
+    TCommandBase <|-- TMovesDBCommand
+    TCommandBase <|-- TActionsDBCommand
+    TCommandBase <|-- TSwearDBCommand
+
+    TMovesDBCommand ..> TActionsDBCommand : chains to on accept (CONFIRMED disassembly)
+    TActionsDBCommand ..> TSwearDBCommand : chains to on accept (inferred, not yet disassembled)
+```
+
+**Shared virtual methods - INCONCLUSIVE, flagged honestly rather than asserted.** Attempted to compare VMT slots across `TMovesDBCommand`/`TActionsDBCommand`/`TSwearDBCommand` directly (to see which methods are literally inherited vs overridden) by reconstructing each class's VMT the same way as before (class-name-string cross-reference + brute-forced negative offset). The technique that worked cleanly for `TMovesDBCommand` (and, consistently, for `TMetaMessageCommand`/`TArenaOwnerCommand`/`TUserCommand`/`TGetIPCommand`) produced clearly-garbage, non-CODE-section values for `TActionsDBCommand` and `TSwearDBCommand` specifically - most likely because the single raw-pointer match found for those two classes' class-name strings isn't actually their `vmtClassName` slot (a coincidental 4-byte collision is plausible in a ~700KB binary), rather than the offset genuinely varying per class. **Not resolved this pass** - would need a more rigorous VMT-recovery method (e.g. cross-checking against a known-shared method's address, or proper Delphi-aware tooling) to answer reliably. Given this, no confident claim is made here about which specific methods are shared vs overridden beyond what's already directly disassembled (`Execute`/`SendCommand`/`ReadLn`-shaped logic is clearly duplicated per-class in the compiled output, whether via override or per-class code generation).
+
+**Does `Self+0xC4` point to one common database object? UNKNOWN - not investigated this pass**, per operator instruction to understand the architecture first. `Self+0xC4` is confirmed (by the calling convention: `mov edx,[eax+0xc4]` where `eax` is the object instance, not the VMT) to be an **instance field**, not a virtual method slot - but whether every `TMovesDBCommand`/`TActionsDBCommand`/`TSwearDBCommand` instance holds the same shared object there (a singleton "database registry"), or each holds a distinct "reference to the next command in the chain" (classic chain-of-responsibility), is exactly the open question deferred until this architecture review was done.
+
+**Sequence diagram - the confirmed/inferred chain, from `MCC` onward:**
+
+```mermaid
+sequenceDiagram
+    participant Arena as arena.exe
+    participant Server as meta server
+
+    Note over Arena,Server: CONFIRMED (runtime) - MCC handshake
+    Arena->>Server: CLAUTH name pass MCC ver
+    Server-->>Arena: OWNER name
+    Arena->>Server: SETPORT port
+    Arena->>Server: SETINFO players max
+
+    Note over Arena,Server: CONFIRMED (runtime+disassembly) - TMovesDBCommand
+    Arena->>Server: REQMOVES
+    Server-->>Arena: response line
+    alt first 7 chars == "MOVESDB" (exact)
+        Arena->>Arena: raise "invalid response" (chain aborts - REAL, OBSERVED behaviour)
+    else first 7 chars != "MOVESDB"
+        Note over Arena: CONFIRMED (disassembly) - chains to TActionsDBCommand
+        Arena->>Server: REQACTIONS
+        Server-->>Arena: response line
+        alt first 9 chars == "ACTIONSDB" (exact)
+            Arena->>Arena: raise "invalid response" (chain aborts, inferred symmetric to Moves)
+        else first 9 chars != "ACTIONSDB"
+            Note over Arena: INFERRED (not yet disassembled) - chains to TSwearDBCommand
+            Arena->>Server: REQSWLIST
+            Server-->>Arena: response line
+            Note over Arena,Server: not yet observed on the wire - REQMOVES itself is still unanswered in every live test so far
+        end
+    end
+```
 
 **Dead end found (2026-07-23):** traced the `"METAARENALIST"` string constant (in gitr2k.exe) to a tiny function at `0x54D01C` that does nothing but return that literal (classic Delphi codegen for `Result := 'METAARENALIST'` — almost certainly a command-name getter on one class in a family of protocol-message classes). Static cross-reference analysis (radare2, full `aaa` auto-analysis, 5353 functions found) turned up **zero callers** of that function. This strongly suggests it's invoked through a Delphi virtual-method-table slot (polymorphic dispatch) rather than a direct call instruction — tracing that needs Delphi-VMT/RTTI-aware tooling (e.g. IDA with Delphi analysis, or "Interactive Delphi Reconstructor") that wasn't available for this pass. Static disassembly is stalled here for now; see §5/§6 for the empirical approach taken instead.
 

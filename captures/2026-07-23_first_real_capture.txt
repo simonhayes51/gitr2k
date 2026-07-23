@@ -540,3 +540,57 @@ task to the VMT-recovery work just completed, not yet attempted.
 No live test this round - static analysis only, correctly labeled as
 such. No change to what the server sends (still no response to
 REQMOVES, per the previous session's revert).
+
+--- Static analysis (no live test): full subsystem architecture mapped before further tracing ---
+Per operator instruction ("pause before tracing Self+0xC4, first identify the
+subsystem architecture"), stepped back from chasing individual functions and
+did a full-binary scan for Pascal shortstring class names (T<Name> pattern)
+instead, to see the whole family TMovesDBCommand belongs to at once.
+
+Found the entire class-name table in one contiguous block of the string
+pool, with remarkably regular ~112-116 byte spacing between adjacent
+entries - strong evidence of a single class-registration array, not
+coincidence:
+
+  TCommandBase, TCommandClassArray, TCommandParser   (infrastructure)
+  TGetIPCommand, TErrorCommand, TMetaMessageCommand,
+  TArenaOwnerCommand, TUserCommand, TMovesDBCommand,
+  TActionsDBCommand, TSwearDBCommand                  (concrete commands)
+
+Mapped classes to already-known protocol tokens by name, cross-checking
+against independent earlier findings where possible: TMetaMessageCommand
+matches the already-disassembled GMCCMetaMessage handler; TArenaOwnerCommand
+matches GMCCArenaOwner (the class behind the confirmed-working MCC/OWNER
+ack); TGetIPCommand matches the confirmed YOURIP token. This gives good
+confidence the naming convention is reliable for the other classes too.
+
+Concluded (STRONG INFERENCE): all 8 concrete classes inherit directly from
+TCommandBase - no narrower "TDBCommand"/database-specific intermediate base
+class name was found anywhere in the string table, so the Moves/Actions/
+Swear chaining behavior is implemented as ordinary per-class virtual method
+overrides on the same base every other command class also uses (not a
+separate hierarchy). TCommandParser + TCommandClassArray look like a
+name-keyed factory/dispatcher pair - notably the same architecture this
+project's own server/protocol.py Dispatcher independently arrived at.
+
+Attempted to directly compare VMT slots across TMovesDBCommand/
+TActionsDBCommand/TSwearDBCommand (to determine which methods are shared/
+inherited vs overridden) using the same VMT-reconstruction technique that
+worked cleanly last session. It produced garbage/non-CODE values for
+TActionsDBCommand and TSwearDBCommand specifically - most likely a
+coincidental false-positive raw-pointer match for those two classes' name
+strings (plausible in a ~700KB binary) rather than a real methodology
+failure. Documented as INCONCLUSIVE rather than asserting numbers we don't
+trust - would need a more rigorous VMT-recovery approach to resolve.
+
+Self+0xC4 (whether it's one shared "database" object or per-instance
+chain-link references) was deliberately NOT investigated this pass, per
+operator instruction to understand the architecture first. This remains
+the next concrete step, now with much better context for what it's likely
+to reveal (either a shared registry singleton, or a classic
+chain-of-responsibility "next command" reference).
+
+Full class diagram and sequence diagram (Mermaid) added to
+docs/protocol.md section 4. No server-side code changes this session - no
+response deployed for REQMOVES, still reverted to silent per the prior
+session's correction.
