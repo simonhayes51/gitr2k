@@ -1,0 +1,32 @@
+First real runtime capture against the genuine gitr2k.exe/arena.exe clients,
+via a binary-patched copy pointed at the Railway-hosted meta server
+(hostname + port patched directly into the DFM resources; see git history
+for the patch). Captured from the meta server's own stdout logging
+(server/logger.py's per-connection RECV heuristics), copied from Railway's
+log viewer.
+
+[2026-07-23 07:34:28.384] CONNECT 100.64.0.10:10908
+[2026-07-23 07:34:28.385] RECV 100.64.0.10:10908  len=24
+  00000000  43 4c 41 55 54 48 20 54 65 73 74 20 6e 6f 6e 65  |CLAUTH Test none|
+  00000010  20 4d 43 43 20 30 0d 0a                          | MCC 0..|
+  ASCII: b'CLAUTH Test none MCC 0\r\n'
+  Heuristics: {'contains_crlf': True, 'contains_lf_only': False, 'contains_cr_only': False, 'printable_ratio': 0.917, 'candidate_delimiters': [{'byte': ' ', 'count': 4}], 'notes': []}
+  Source: arena.exe (GUI showed "arena name: Test", "arena password: ####")
+
+[2026-07-23 07:35:10.471] CONNECT 100.64.0.10:37408
+[2026-07-23 07:35:10.472] RECV 100.64.0.10:37408  len=27
+  00000000  43 4c 41 55 54 48 20 4e 49 4c 20 4e 49 4c 20 47  |CLAUTH NIL NIL G|
+  00000010  49 54 52 4e 45 57 53 20 30 0d 0a                 |ITRNEWS 0..|
+  ASCII: b'CLAUTH NIL NIL GITRNEWS 0\r\n'
+  Heuristics: {'contains_crlf': True, 'contains_lf_only': False, 'contains_cr_only': False, 'printable_ratio': 0.926, 'candidate_delimiters': [{'byte': ' ', 'count': 4}], 'notes': []}
+  Source: gitr2k.exe, sent automatically on startup before any login step
+
+[2026-07-23 07:35:14.637] CONNECT 100.64.0.4:42830
+[2026-07-23 07:35:14.661] RECV 100.64.0.4:42830  len=29
+  00000000  43 4c 41 55 54 48 20 20 4e 49 4c 20 4d 45 54 41  |CLAUTH  NIL META|
+  00000010  41 52 45 4e 41 4c 49 53 54 20 30 0d 0a           |ARENALIST 0..|
+  ASCII: b'CLAUTH  NIL METAARENALIST 0\r\n'
+  Heuristics: {'contains_crlf': True, 'contains_lf_only': False, 'contains_cr_only': False, 'printable_ratio': 0.931, 'candidate_delimiters': [{'byte': ' ', 'count': 4}], 'notes': []}
+  Source: gitr2k.exe, sent when the "Select Arena" dialog opened (shows
+          "retrieving country list" - this request never got a response,
+          so the dialog just spins forever)

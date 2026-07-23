@@ -20,7 +20,9 @@ Confidence levels used throughout this project:
 | Networking stack | Delphi + Indy (`TIdTCPConnection`/`TIdTCPClient`/`TIdTCPServer`) | Class names visible in compiled RTTI/DFM data |
 | Resolver | Standard Winsock `gethostbyname`/`WSAAsyncGetHostByName` | Import table / string analysis — no custom DNS, no hardcoded IP fallback found |
 
-**STRONG INFERENCE:** Windows `HOSTS` file redirection of `GETINTR2K.MINIDNS.NET` should be sufficient to point the client/arena.exe at a replacement server — no binary patching confirmed necessary. This should be verified empirically the first time the server is run against a real client (see §6).
+**STRONG INFERENCE:** Windows `HOSTS` file redirection of `GETINTR2K.MINIDNS.NET` should be sufficient to point the client/arena.exe at a replacement server — no binary patching confirmed necessary. This still hasn't been tested directly (our first successful runtime test used a binary-patched client instead, on a machine without admin rights to edit `HOSTS`), so it remains unconfirmed either way.
+
+**CONFIRMED (runtime, 2026-07-23):** Redirecting both the host and port the client/arena.exe connect to (tested via direct binary patch of the DFM-embedded `Host`/`Port` properties, not `HOSTS`) is sufficient for both clients to establish a TCP connection and begin sending real protocol traffic. See `captures/2026-07-23_first_real_capture.txt`.
 
 ---
 
@@ -46,19 +48,31 @@ The presence of a string in the compiled code confirms the program *recognizes* 
 | `PING` | arena.exe | client↔server (assumed keepalive) | CONFIRMED (disassembly) | UNKNOWN exact framing |
 | `YOURIP` | gitr2k.exe | server→client (assumed) | CONFIRMED (disassembly) | UNKNOWN |
 | `SETDIVIDER` | gitr2k.exe | server→client (assumed) | CONFIRMED (disassembly) | **Important**: suggests the field delimiter may be assigned dynamically by the server rather than fixed. Treat the delimiter as UNKNOWN until confirmed either way. |
-| `CHATREQ`, `CLAUTH`, `FIGHTREQ`, `GRANTOP`, `KICKUSER`, `SETADMINLIST`, `SETBANLIST`, `SETMAXNUM`, `SETWELCOMEMSG` | arena.exe only | assumed admin/host-side commands | CONFIRMED (disassembly) | UNKNOWN |
+| `CHATREQ`, `FIGHTREQ`, `GRANTOP`, `KICKUSER`, `SETADMINLIST`, `SETBANLIST`, `SETMAXNUM`, `SETWELCOMEMSG` | arena.exe only | assumed admin/host-side commands | CONFIRMED (disassembly) | UNKNOWN |
+| `CLAUTH` | both `gitr2k.exe` and `arena.exe` | client→server | CONFIRMED (runtime) — see §3, it's the envelope wrapping every outbound command, not an arena.exe-only admin verb as previously assumed | CONFIRMED (runtime) for framing/args; response format still UNKNOWN |
+| `MCC` | arena.exe | client→server, as the `<COMMAND>` value inside a `CLAUTH` line | CONFIRMED (runtime) — not previously in this table at all | UNKNOWN — likely arena.exe's registration/handshake with the meta server (matches the `GMCC` component name found via disassembly), exact semantics not yet determined |
 
 **Note:** `arena.exe` also contains Pascal-like scripting keywords (`BEGIN`, `WHILE`, `FUNC`, `SCRIPT`, `PLUGIN`, `ACTIONSDB`, `MOVESDB`, `SWEARDB`). These belong to an embedded scripting/plugin engine, unrelated to the network protocol, and are intentionally excluded from the table above.
 
 ---
 
-## 3. Login / authentication (UNKNOWN)
+## 3. Login / authentication
 
-No confirmed login/handshake sequence has been found. What we do know:
+**CONFIRMED (runtime, 2026-07-23)** — see `captures/2026-07-23_first_real_capture.txt`. Every outbound command from both clients is wrapped in a single-line envelope:
 
-- `GITRNewsList`/`GMCC` connection defaults include `Authorization = atClear`, `Username = "NIL"`, `Password = "NIL"` — but these property names match Indy's SOCKS-proxy configuration convention as much as they match a hypothetical game-login mechanism, so this is **UNKNOWN**, not confirmed, whether it reflects real credentials or unused proxy defaults.
-- UI captions "Login as a Guest User" and "Login with current Username" exist, and a `GUEST` token exists — but no clean `LOGIN`/`LOGON` wire-protocol verb has been found in either binary's strings.
-- **TODO(runtime):** capture the very first bytes the client sends after connecting — this is the highest-priority open question, since without it we can't confirm whether any handshake/auth step happens before other commands are meaningful.
+```
+CLAUTH <username> <password> <COMMAND> <version>\r\n
+```
+
+- Fields are space-delimited (confirmed: exactly 4 spaces in every captured line, 5 fields total including `CLAUTH` itself), line-terminated with `\r\n`.
+- This is sent **immediately on connect, before any other handshake** — answers open question #1 from §6. There is no separate login/handshake step before commands become meaningful; `CLAUTH` *is* the envelope, sent per-command, not once per session.
+- Observed `<username>`/`<password>` values so far:
+  - `gitr2k.exe` requesting `GITRNEWS` on startup: `NIL NIL` (both literal string `"NIL"`)
+  - `gitr2k.exe` requesting `METAARENALIST` (from the arena-select dialog): empty-string username, literal `"NIL"` password — i.e. these two fields are **not** filled in consistently from one command to the next by the same unauthenticated session. Worth resolving once we've captured a command sent *after* an actual login.
+  - `arena.exe` requesting `MCC`: username `"Test"` (the literal arena name typed into its GUI), password `"none"` (literal word, distinct from `gitr2k.exe`'s `"NIL"` placeholder)
+- `<version>` was `0` in all three captures so far — UNKNOWN whether this is a fixed protocol version or something else entirely.
+- Still **UNKNOWN**: the expected *response* format for any of these commands. The server currently sends nothing back by design, which is why both the arena-registration flow and the arena-select dialog just hang (confirmed behavior, not a bug in the client).
+- Still **UNKNOWN**: what a real login (`Login as a Guest User` / `Register a Username` / `Login with current Username`) actually sends — none of our captures so far came from clicking those options.
 
 ---
 
@@ -98,16 +112,19 @@ Internal helper addresses referenced but not identified: `0x45A36C` (calling con
 
 | Command | Direction | Args | Delimiter | Example packet | Meaning | Expected response | Confidence |
 |---|---|---|---|---|---|---|---|
-| *(none yet — awaiting first capture)* | | | | | | | |
+| `GITRNEWS` | client→server | username, password | space, `\r\n` terminated | `CLAUTH NIL NIL GITRNEWS 0\r\n` | gitr2k.exe requesting the news bulletin on startup | UNKNOWN (see `GITRNEWS`/`ENDNEWSLIST` tokens in §2) | CONFIRMED (runtime) for the request; response UNKNOWN |
+| `METAARENALIST` | client→server | username, password | space, `\r\n` terminated | `CLAUTH  NIL METAARENALIST 0\r\n` | gitr2k.exe requesting the arena list for the "Select Arena" dialog | UNKNOWN (see `ENDARENALIST` in §2) | CONFIRMED (runtime) for the request; response UNKNOWN |
+| `MCC` | client→server | arena name, arena password | space, `\r\n` terminated | `CLAUTH Test none MCC 0\r\n` | arena.exe registering itself with the meta server | UNKNOWN | CONFIRMED (runtime) for the request; response UNKNOWN |
 
 ---
 
 ## 6. Open questions to resolve first (priority order)
 
-1. **What does the client send immediately on connect?** (Answers: login/handshake existence, first-command framing, whether `SETDIVIDER` shows up early.)
-2. **Is there a fixed delimiter, or does the server send `SETDIVIDER` to set one dynamically?** This affects how every other field should be parsed, so needs resolving before trusting any other field-splitting.
-3. **Does `HOSTS` file redirection alone work**, or does the client perform some check that requires further investigation?
-4. **What does arena.exe send to register an arena** with the meta server? (Needed for Phase 4 — populating `ArenaRegistry` from real registration traffic rather than guesswork.)
-5. **What is the real `METAARENALIST` response format** — field order, per-arena delimiter, whether `ENDARENALIST` terminates the list.
+1. ~~**What does the client send immediately on connect?**~~ **ANSWERED (2026-07-23):** `CLAUTH <username> <password> <COMMAND> <version>\r\n`, sent per-command rather than once per session — see §3.
+2. **Is there a fixed delimiter, or does the server send `SETDIVIDER` to set one dynamically?** Space-delimiter confirmed for the `CLAUTH` envelope itself; still UNKNOWN whether per-command payloads (once we have responses) use the same delimiter or something set by `SETDIVIDER`.
+3. **Does `HOSTS` file redirection alone work**, or does the client perform some check that requires further investigation? Still untested — our first successful connection used a binary-patched client instead (see §1), on a machine without admin rights to test `HOSTS` directly.
+4. ~~**What does arena.exe send to register an arena**~~ **PARTIALLY ANSWERED (2026-07-23):** `CLAUTH <arena name> <arena password> MCC 0\r\n` — see §3/§5. Still UNKNOWN what response the meta server needs to send back for the arena to consider itself registered (arena.exe's activity log stays empty, "Start" becomes clickable, but nothing further happens without a response).
+5. **What is the real `METAARENALIST` response format** — field order, per-arena delimiter, whether `ENDARENALIST` terminates the list. **Now the top priority** — this is the next concrete thing to disassemble: find where `gitr2k.exe` parses an incoming `METAARENALIST`/`ENDARENALIST` response (same published-method-RTTI technique used to locate `GMCCMetaMessage` in §4) before attempting to synthesize any response, per this project's own rule against inventing behavior ahead of evidence.
+6. **What response ends the arena.exe registration handshake (`MCC`)?** New, from today's capture — needed before arena.exe can do anything past connecting.
 
 Update the table in §5 and the confidence markers throughout this document as each of these gets resolved — and please don't upgrade a confidence marker without a corresponding file in `captures/` (for runtime) or a specific address/offset (for disassembly) to point to.
