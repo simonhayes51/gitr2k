@@ -984,3 +984,63 @@ tokens. Full findings in docs/protocol.md section 9. Summary:
 - ActionDatabase and sdb still have zero confirmed open/load/injection path
   anywhere in the binary (separate, pre-existing gap, not newly caused by
   this session).
+
+================================================================================
+2026-07-23, eighth session: full disassembly of 0x4a120c - extends the call
+graph past "retrieving moves database" (see docs/protocol.md section 10)
+================================================================================
+
+Continuation of the seventh session's static-analysis pass, per operator's
+"Resume" instruction. Fully disassembled 0x4a120c (previously only partially
+covered) and re-disassembled 0x462fa0. No live test this session - static
+analysis only. Key results:
+
+- Confirmed the full call graph from btnStartStopClick through to the
+  arena's final "server started" / "Error starting, port might be in use,"
+  log lines - substantially further than the seventh session reached.
+- Re-disassembled 0x462fa0 in full: corrected an earlier characterization
+  ("TStrings.Add-style") - it actually operates on a native Pascal dynamic
+  array of strings (confirmed via the array's own [ptr-4] length header)
+  plus a separate lock/sub-object at +0x30. Still structurally incompatible
+  with a plain TLabel.
+- Re-verified, three times now, that the log target field (field_0x300) is
+  used identically at all EIGHT call sites to 0x462fa0 inside 0x4a120c, and
+  that Self really is frmGITRServer throughout (confirmed via dozens of
+  other correctly-behaving field accesses in the same function). The
+  field_0x300/TLabel contradiction is now exhaustively re-verified, not a
+  misread - and is reported back to the operator as an explicit decision
+  point (accept the ambiguity, or authorize a narrow layout check) rather
+  than guessed past.
+- NEW FINDING: identified the exact three-block sequence that touches
+  ActionDatabase, FSDRunOnce, and FightDatabase in turn (each preceded by a
+  "retrieving X" log line), each via a thin 5-instruction virtual-dispatch
+  thunk (0x45b7c0, fully disassembled - calls VMT+0x54 on the target).
+- CORRECTION: FSDRunOnce (which sits between ActionDatabase and
+  FightDatabase in this sequence) is NOT a database - confirmed via DFM its
+  real class is TFnugrySharedData (a single-instance/shared-data guard,
+  unrelated to the wrestling databases). This also proves the RTTI
+  type-index shared by FSDRunOnce/ActionDatabase/FightDatabase (all "16")
+  is not reliable for class identity - a second independent confirmation of
+  the same caveat found earlier for "type4".
+- NEW, NARROWED localization of the real runtime blocker: since real
+  captures show the UI stuck exactly at "retrieving moves database" and
+  never reaching "retrieving actions database", and the code between those
+  two log lines is a single straight-line block ending in the
+  ActionDatabase.VMT[0x54] virtual call (via the thunk above), the actual
+  blocking behavior is now confirmed (by elimination) to live behind that
+  one virtual dispatch - no socket/network API call was found anywhere in
+  the surrounding straight-line code.
+- NEW: identified (STRONG INFERENCE, behavioral - not layout-based) that a
+  virtual call on a private field (field_0x2d0, likely GITRServer or a
+  wrapper around it) is what starts the arena's inbound TCP listener -
+  its failure path logs "Error starting, port might be in use," (a
+  confirmed string, matching a classic bind()-failure message), and its
+  success path logs "server started". This is the closest this
+  investigation has come to identifying "the function that transitions the
+  arena to accepting clients" - though the exact virtual method still can't
+  be named without VMT reconstruction (out of scope).
+
+Full write-up in docs/protocol.md section 10, which explicitly supersedes
+section 9's "chain stops here" framing for 0x4a120c specifically (section 9
+remains correct for everything else - FormCreate, the five-database table,
+ObjectBroker dependency injection).

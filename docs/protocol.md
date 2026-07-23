@@ -677,4 +677,91 @@ GITRObjectBroker.OnAfterCreateObject (0x49e9f8)
 
 ---
 
+## 10. `0x4a120c` fully disassembled — supersedes §9.6/9.7's "chain stops here" (2026-07-23, third pass)
+
+§9 stopped at `0x4a120c`'s first two log calls and flagged the `field_0x300`/`0x462fa0` contradiction as unresolved. This pass disassembled `0x4a120c` in its entirety (it is one large function, `0x4a120c`–`~0x4a1709`) and re-disassembled `0x462fa0` itself. Result: the call graph extends much further than §9 found, one real structural contradiction is now precisely characterized (not resolved), and the actual real-world "stuck" point is now localized to a single, specific virtual-dispatch site.
+
+### 10.1 `0x462fa0`, re-disassembled — correction to §9.4's characterization
+
+Full disassembly (`eax`=Target on entry, `edx`=string to append):
+
+```
+[Target+0x30] -> object A; call A.VMT[0]           ; "begin" call on a sub-object
+[Target+0x34] -> call 0x405d80                     ; returns current length into ebx
+[Target+0x34] (address, not deref) -> call 0x405f3c ; dynamic-array resize/grow helper (global type-descriptor ds:0x462dc0 passed in edx - the standard argument shape for Delphi's dynamic-array runtime helpers)
+[Target+0x34] (deref) -> cmp ebx,[eax-0x4]          ; bounds check against the array's own length header at [array-4] - this is a native Pascal dynamic array, not a TStrings/TList object
+lea eax,[eax+ebx*4]; call 0x403d28(edx=string)      ; assign the string into the new slot
+[Target+0x30] -> object A; call A.VMT[0x4]          ; "end" call on the same sub-object
+```
+
+**Correction:** this is not "`TStrings.Args`-style" as characterized in §9.4/earlier phases — `Target+0x34` is confirmed (via the `[array-4]` length-header bounds check, a Delphi dynamic-array-specific idiom) to be a **native Pascal dynamic array of strings**, and `Target+0x30` is a pointer to some other object whose VMT slots 0/4 bracket the append (lock or begin/end-update semantics, exact identity unresolved). Either way, `Target` must supply both fields at fixed offsets — a requirement a plain `TLabel` still cannot satisfy.
+
+### 10.2 `field_0x300` vs `0x462fa0` — thoroughly re-verified, not a misread
+
+Every one of the **eight** call sites to `0x462fa0` inside `0x4a120c` follows the identical pattern `mov eax,[ebp-0x4] (reload Self) ; mov eax,[eax+0x300] ; mov edx,<string> ; call 0x462fa0` — there is no intervening pointer chase, and `[ebp-0x4]` is confirmed to be `Self` (proven independently by dozens of other field accesses in the same function — `edtArenaPass`/0x31c, `lblArenaPass`/0x318, `bvlBevel1`/0x30c, `ActionDatabase`/0x334, `FSDRunOnce`/0x330, `FightDatabase`/0x338 — all used with semantically sensible behavior, e.g. disabling the password field before connecting). This rules out a misread on either the call-site or the `0x462fa0` side. The RTTI table (re-verified a third time this session, byte-identical to §9.1) and the DFM (re-checked directly: `TLabel lblLabel1 ... Caption='arena activity log:'`) both say offset `0x300` is a plain `TLabel`. `lbLog` — the DFM's actual `TListBox` (offset `0x2dc`), which *would* plausibly support an internal items-array — is never referenced by any of these eight calls.
+
+**This is a confirmed, precisely-characterized structural contradiction, not resolved this pass.** Resolving it requires determining the *actual* compiled in-memory offset of whatever object really sits at `Self+0x300` versus what the published RTTI table claims — which is exactly the class-layout/VMT work this project has explicitly ruled out. I'm surfacing this as a decision point rather than guessing further: either accept the ambiguity and treat "the log target" as behaviorally-confirmed-but-nominally-unidentified, or explicitly authorize a narrow, single-field layout check scoped only to this one contradiction.
+
+### 10.3 The rest of `0x4a120c`, confirmed — extends the call graph well past §9.6
+
+```
+0x4a120c
+ ├─ [btnStartStop.VMT+0x54]() → if true, or [field_0x2d0]+0x64 flag set:
+ │    └─ log "Cannot start - already running!" (0x4a179c) → return (STOP path)
+ └─ else (the real Start path):
+      ├─ disable edtArenaPass, lblArenaPass, bvlBevel1 (SetEnabled-shaped call, dl=0)
+      ├─ log "connected"                       (0x4a17c4)
+      ├─ log "retrieving moves database"        (0x4a17d8)
+      ├─ construct temp object, ActionDatabase.VMT[0x54](tempobj)  ← via thin thunk 0x45b7c0, see 10.4
+      ├─ log "retrieving actions database"      (0x4a17fc)
+      ├─ construct temp object, FSDRunOnce.VMT[0x54](tempobj)      ← FSDRunOnce is NOT a database, see 10.5
+      ├─ log "retrieving swear-list"            (0x4a1820)
+      ├─ construct temp object, FightDatabase.VMT[0x54](tempobj)   ← via the same thunk
+      ├─ try:
+      │    ├─ [field_0x2d0].VMT[0x48](dl=True)   ← STRONG INFERENCE: starts GITRServer's inbound listener (see 10.6)
+      │    └─ log "server started"              (0x4a18ac)   [success path]
+      └─ except:
+           └─ log "Error starting, port might be in use," (0x4a18c4)   [failure path]
+                └─ re-enable edtArenaPass, lblArenaPass, bvlBevel1 (SetEnabled, dl=1) — symmetric with the disable step above
+```
+
+Separately, earlier in the same function (before the block above — see §9.3), there is an unrelated exception-message-building sequence at `0x4a1543`–`0x4a15c1` that constructs and raises `"Could not connect to main GITR server, message follows: " + <exception message>` (string head `0x4a1840`, confirmed 55 chars) via `0x40db98`/`0x404014`(`_LStrCatN`)/`0x40c9a8`(construct exception)/`0x403774`(raise) — this is the same message text already independently confirmed from the real EXPERIMENT #1 client reaction (`commands/reqmoves.py`), now located in code for the first time. It sits inside the same function but is **not** in the direct-line path shown above (reached only via a `jno`/overflow-style branch guard, not disassembled further this pass — noted as a real code path here, whose exact trigger condition is not yet confirmed).
+
+### 10.4 The real, narrowed-down location of the runtime "stuck at retrieving moves database" blocker
+
+`0x45b7c0` (the function called on `ActionDatabase`/`FSDRunOnce`/`FightDatabase` in each of the three blocks above) is a **five-instruction thin thunk**, disassembled in full:
+
+```
+lea ecx,[eax+0x24]      ; ecx = TargetDB + 0x24
+mov ebx,[eax]            ; ebx = TargetDB's VMT
+call [ebx+0x54]           ; virtual dispatch: (Self=TargetDB, ecx=TargetDB+0x24, edx=tempobj[unchanged from caller])
+pop ebx
+ret
+```
+
+This is a real, disassembly-confirmed thunk, not speculation — but what actually executes is behind a virtual call (VMT slot `0x54` of `ActionDatabase`'s/`FSDRunOnce`'s/`FightDatabase`'s real class), which per this project's standing rule is not chased further without VMT reconstruction.
+
+**This directly narrows the real-world blocker.** The confirmed log sequence order is: "connected" → "retrieving moves database" → *[ActionDatabase's `VMT[0x54]` call]* → "retrieving actions database" → *[FSDRunOnce's `VMT[0x54]` call]* → "retrieving swear-list" → *[FightDatabase's `VMT[0x54]` call]* → GITRServer-listen attempt → "server started"/"port in use". Since real captures show the UI **stuck exactly at "retrieving moves database"** and never reaching "retrieving actions database", the blocking call — whatever it is — is confirmed (by elimination, given the straight-line, no-branch structure of this code) to be **inside the virtual method reached from the `ActionDatabase.VMT[0x54]` call** (via the `0x45b7c0` thunk) or something it calls. No socket/network API reference was found anywhere in `0x4a120c`, `0x45b7c0`, `0x414260` (the temp-object constructor), or `0x413d4c` (a virtual-dispatch-only helper) — so if this is genuinely a network-blocking call, it happens **behind that one virtual dispatch**, not in any of the straight-line code surrounding it. This is the single most precise localization of the blocker reached so far, and it terminates at the same VMT wall as every other unresolved question this session.
+
+### 10.5 Correction: `FSDRunOnce` is not a database
+
+Checked directly against the DFM (not inferred from the RTTI type-index, which — confirmed this pass — is **not reliable for class identity**: `FSDRunOnce`/`ActionDatabase`/`FightDatabase` all share RTTI type-index `16`, yet the DFM gives `FSDRunOnce`'s real class as **`TFnugrySharedData`**, not `TJHCompressedDataStorage`). "Fnugry" (also seen elsewhere as a likely author/vendor name) + "SharedData" + "RunOnce" is consistent with a single-instance-application guard, unrelated to the wrestling databases — it merely happens to receive the identical construct-and-call-`VMT[0x54]` treatment as the two real databases either side of it in this function, which is why it was initially easy to mistake for a third database. This does not change the five-database table in §9.5 (FSDRunOnce was never one of the five), but it does mean the three-block pattern in 10.3 is **not** exclusively database-loading logic — whatever `VMT[0x54]` does, it's evidently generic enough to apply to a single-instance guard too.
+
+### 10.6 `field_0x2d0` — behavioral identity, STRONG INFERENCE only
+
+`field_0x2d0` (never in the published-fields table, which starts at `0x2d4` — almost certainly a private, non-published field of `frmGITRServer` itself) is used twice in this function, both times consistent with being (or wrapping) `GITRServer`, the confirmed inbound listener from §7:
+1. At entry: `[field_0x2d0]+0x64` gates the "already running" check (§9.3).
+2. In 10.3's try-block: `[field_0x2d0].VMT[0x48](dl=True)` is the only statement that can raise inside that try, and its except-handler logs **"Error starting, port might be in use,"** — a textbook TCP-listener-bind failure message.
+
+**STRONG INFERENCE (behavioral, not layout-based):** this call is what actually starts `GITRServer`'s inbound listen socket, and "server started" is the confirmed log line that follows a successful call. This is the closest this investigation gets to "which function transitions the arena to accepting clients" — the transition is this specific virtual call, even though its target class/method cannot be named without VMT work this project has ruled out.
+
+### 10.7 Updated confidence summary (supersedes §9.9)
+
+- **CONFIRMED (disassembly):** the full call graph in 10.3; `0x462fa0`'s real semantics (10.1, dynamic array + sub-object, correcting the earlier "TStrings.Add" characterization); the thin-thunk nature of `0x45b7c0` (10.4); all string contents and VAs.
+- **CONFIRMED (DFM):** `FSDRunOnce`'s real class is `TFnugrySharedData`, not a database (10.5); RTTI type-indices are confirmed unreliable for class identity (a second, independent confirmation of the same caveat from §9.1's "type4" observation).
+- **STRONG INFERENCE:** `field_0x2d0`'s identity/role as (or wrapping) `GITRServer`'s listen-control (10.6).
+- **UNKNOWN / explicitly unresolved, precisely localized:** (a) the `field_0x300` vs `0x462fa0` contradiction (10.2) — needs a targeted layout check, explicitly flagged as a decision point rather than resolved; (b) what actually executes behind `ActionDatabase.VMT[0x54]` — the single most likely location of the real "stuck at retrieving moves database" behavior (10.4); (c) `sdb`'s and the GMCC/REQMOVES-to-`0x4a120c` connection — unchanged from §9.
+
+---
+
 Update the table in §5 and the confidence markers throughout this document as each of these gets resolved — and please don't upgrade a confidence marker without a corresponding file in `captures/` (for runtime) or a specific address/offset (for disassembly) to point to.
